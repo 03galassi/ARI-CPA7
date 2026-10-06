@@ -35,23 +35,26 @@ function cpfValid(cpf){
 }
 async function emailForCpf(cpf){
   const normalized = onlyDigits(cpf);
-  if(!sb) return `${normalized}@login.ari-cpa7.local`;
 
-  // Consulta o e-mail cadastrado pelo CPF. O retorno da função SQL é texto.
+  // Administrador já confirmado no Supabase.
+  // Fazemos esta associação diretamente para não depender do retorno
+  // do RPC durante a recuperação da senha.
+  if (normalized === "82011435153") return "03galassi@gmail.com";
+
+  if(!sb) return null;
+
   try {
-    const rpc = await sb.rpc("get_login_email", { p_cpf: normalized });
-    console.log("ARI-CPA7 RPC", { cpf: normalized, data: rpc.data, error: rpc.error });
-    if (!rpc.error && typeof rpc.data === "string" && rpc.data.trim()) {
-      return rpc.data.trim();
+    const { data, error } = await sb.rpc("get_login_email", { p_cpf: normalized });
+    console.log("ARI-CPA7 RPC", { cpf: normalized, data, error });
+    if (error) throw error;
+    if (typeof data === "string" && data.trim()) return data.trim();
+    if (Array.isArray(data) && data.length) {
+      const value = data[0]?.auth_email || data[0]?.email || data[0];
+      if (typeof value === "string" && value.trim()) return value.trim();
     }
   } catch (err) {
     console.error("ARI-CPA7 RPC exception", err);
   }
-
-  // Fallback temporário para o administrador já criado no Supabase.
-  // Isso garante a recuperação do administrador mesmo se o cliente RPC estiver em cache.
-  if (normalized === "82011435153") return "03galassi@gmail.com";
-
   return null;
 }
 function showMsg(el,text){el.textContent=text;el.classList.remove("hidden");}
