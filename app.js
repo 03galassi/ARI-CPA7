@@ -473,7 +473,7 @@ const demoUsers = demoAccounts.map(u=>({
   id:u.id,
   name:u.name,
   cpf:u.cpf,
-  role:u.role==='admin'?'Administrador':'Agente de Campo',
+  role:u.role==='admin'?'Administrador':'Chefe de Equipe',
   status:u.status==='ativo'?'Ativo':'Bloqueado'
 }));
 let demoHistory = [
@@ -550,7 +550,7 @@ async function renderDemoUsers(){
   const rows=users.map(u=>`<tr>
     <td>${escHtml(u.name)}</td>
     <td>${escHtml(u.cpf)}</td>
-    <td>${u.role==='admin'?'Administrador':'Agente de Campo'}</td>
+    <td>${u.role==='admin'?'Administrador':'Chefe de Equipe'}</td>
     <td class="status ${u.status==='ativo'?'ativo':'bloqueado'}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
     <td class="actions-cell">
       <button class="secondary user-edit" data-id="${escHtml(u.id)}">Editar</button>
@@ -570,7 +570,7 @@ async function renderDemoUsers(){
         <input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" placeholder="6 dígitos">
         <small class="muted">Obrigatória no cadastro. Na edição, deixe em branco para manter a senha.</small>
       </div>
-      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Agente de Campo</option><option value="admin">Administrador</option></select></div>
+      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Chefe de Equipe</option><option value="admin">Administrador</option></select></div>
       <div><label>Status</label><select id="newUserStatus"><option value="ativo">Ativo</option><option value="bloqueado">Bloqueado</option></select></div>
       <div class="actions full">
         <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
@@ -636,7 +636,7 @@ async function renderDemoUsers(){
           date:new Date().toLocaleString("pt-BR"),
           user:currentProfile.cpf,
           action:editingId?"Edição de usuário":"Cadastro de usuário",
-          detail:`${name} / ${cpf} / ${role==="admin"?"Administrador":"Agente de Campo"}`
+          detail:`${name} / ${cpf} / ${role==="admin"?"Administrador":"Chefe de Equipe"}`
         });
 
         await renderDemoUsers();
@@ -858,154 +858,245 @@ function renderHistory(){
   }</tbody></table>`;
 }
 async function generateDemoReport(){
-  const monthInput = $("reportMonth");
-  const month = monthInput?.value || "";
-
-  if(!month){
-    showMsg($("reportMsg"),"Selecione o mês do relatório.");
-    return;
-  }
-
-  const [year, monthNumber] = month.split("-").map(Number);
-  const monthStart = `${month}-01`;
-  const nextMonthDate = new Date(year, monthNumber, 1);
-  const nextYear = nextMonthDate.getFullYear();
-  const nextMonth = String(nextMonthDate.getMonth()+1).padStart(2,"0");
-  const monthEndExclusive = `${nextYear}-${nextMonth}-01`;
-
-  let rows = [];
+  const resultEl = $("reportResult");
+  if(!resultEl) return;
 
   try{
-    if(sb){
-      if(!isAdminUser()){
-        showMsg($("reportMsg"),"Somente administradores ativos podem consultar o relatório.");
-        return;
-      }
-
-      const {data,error}=await sb
-        .from("activities")
-        .select("id,owner_id,saida_data,saida_hora,viatura,km_inicial,km_final,profiles(name,cpf)")
-        .gte("saida_data",monthStart)
-        .lt("saida_data",monthEndExclusive)
-        .order("saida_data",{ascending:false})
-        .order("saida_hora",{ascending:false});
-
-      if(error){
-        console.error("ARI-CPA7: erro no relatório mensal",error);
-        showMsg($("reportMsg"),`Não foi possível gerar o relatório: ${error.message || "erro no banco de dados."}`);
-        return;
-      }
-
-      rows=(data||[]).map(a=>({
-        ...a,
-        ownerName:a.profiles?.name || "Sem identificação",
-        ownerCpf:a.profiles?.cpf || "—"
-      }));
-    }else{
-      rows=[...window.ariDemoActivities].filter(a=>{
-        const date=a.data || "";
-        return date >= monthStart && date < monthEndExclusive;
-      }).map(a=>({
-        ...a,
-        ownerName:a.ownerName || a.owner || "Sem identificação",
-        ownerCpf:a.ownerCpf || a.cpf || "—"
-      }));
+    if(!sb){
+      resultEl.innerHTML = `
+        <div class="item">
+          <strong>Relatório mensal</strong>
+          <p class="ari-muted">O relatório mensal depende dos dados reais do Supabase.</p>
+        </div>`;
+      return;
     }
 
-    const groups = new Map();
+    if(!isAdminUser()){
+      resultEl.innerHTML = `<div class="item"><strong>Acesso negado.</strong><p class="ari-muted">Somente administradores ativos podem visualizar o consolidado da equipe.</p></div>`;
+      return;
+    }
 
-    rows.forEach(a=>{
-      const key=a.owner_id || a.ownerCpf || a.ownerName || "sem-equipe";
-      if(!groups.has(key)){
-        groups.set(key,{
-          name:a.ownerName || "Sem identificação",
-          cpf:a.ownerCpf || "—",
+    const {data,error}=await sb
+      .from("activities")
+      .select("id,owner_id,saida_data,saida_hora,viatura,km_inicial,km_final,profiles(name,cpf,role)")
+      .order("saida_data",{ascending:false})
+      .order("saida_hora",{ascending:false});
+
+    if(error){
+      console.error("ARI-CPA7: erro no relatório mensal",error);
+      resultEl.innerHTML=`<div class="item"><strong>Erro ao carregar relatório.</strong><p>${escHtml(error.message||"Erro no banco de dados.")}</p></div>`;
+      return;
+    }
+
+    const activities=(data||[]).filter(a=>a.saida_data);
+
+    /*
+     * Estrutura visual:
+     * MÊS
+     *   CHEFE DE EQUIPE
+     *      ações
+     *      km
+     *
+     * Não existe campo de busca nem seleção de mês.
+     * O mais recente aparece primeiro.
+     */
+    const months=new Map();
+
+    activities.forEach(a=>{
+      const monthKey=String(a.saida_data).slice(0,7);
+      if(!months.has(monthKey)){
+        months.set(monthKey,{
+          key:monthKey,
+          actions:0,
+          km:0,
+          chiefs:new Map()
+        });
+      }
+
+      const month=months.get(monthKey);
+      month.actions += 1;
+
+      const kmInicial=Number(a.km_inicial);
+      const kmFinal=Number(a.km_final);
+      if(Number.isFinite(kmInicial) && Number.isFinite(kmFinal) && kmFinal>=kmInicial){
+        month.km += kmFinal-kmInicial;
+      }
+
+      const chiefId=a.owner_id || `cpf-${a.profiles?.cpf||"sem-cpf"}`;
+      if(!month.chiefs.has(chiefId)){
+        month.chiefs.set(chiefId,{
+          name:a.profiles?.name || "Chefe de equipe não identificado",
+          cpf:a.profiles?.cpf || "—",
           actions:0,
           km:0
         });
       }
 
-      const g=groups.get(key);
-      g.actions += 1;
-
-      const kmInicial=Number(a.km_inicial ?? a.kmInicial);
-      const kmFinal=Number(a.km_final ?? a.kmFinal);
-
+      const chief=month.chiefs.get(chiefId);
+      chief.actions += 1;
       if(Number.isFinite(kmInicial) && Number.isFinite(kmFinal) && kmFinal>=kmInicial){
-        g.km += kmFinal-kmInicial;
+        chief.km += kmFinal-kmInicial;
       }
     });
 
-    const summary=[...groups.values()].sort((a,b)=>{
+    const monthBlocks=[...months.values()].sort((a,b)=>b.key.localeCompare(a.key));
+
+    if(!monthBlocks.length){
+      resultEl.innerHTML=`
+        <div class="item">
+          <strong>Nenhuma atividade registrada.</strong>
+          <p class="ari-muted">Quando os chefes de equipe lançarem atividades, o consolidado mensal aparecerá automaticamente aqui.</p>
+        </div>`;
+      return;
+    }
+
+    resultEl.innerHTML=`
+      <div id="monthlyReportContainer">
+        ${monthBlocks.map(month=>{
+          const monthLabel=new Date(`${month.key}-01T12:00:00`).toLocaleDateString(
+            "pt-BR",{month:"long",year:"numeric"}
+          );
+
+          const chiefs=[...month.chiefs.values()].sort((a,b)=>{
+            if(b.actions!==a.actions)return b.actions-a.actions;
+            return b.km-a.km;
+          });
+
+          return `
+            <section class="item monthly-report-month">
+              <div class="monthly-report-header">
+                <div>
+                  <h3 style="margin:0;text-transform:capitalize">📅 ${escHtml(monthLabel)}</h3>
+                  <p class="ari-muted" style="margin:4px 0 0">
+                    ${month.actions} ação(ões) • ${month.km.toLocaleString("pt-BR")} km
+                  </p>
+                </div>
+              </div>
+
+              <div class="table-scroll">
+                <table class="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Chefe de equipe</th>
+                      <th>CPF</th>
+                      <th>Ações realizadas</th>
+                      <th>KM rodados</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${chiefs.map(chief=>`
+                      <tr>
+                        <td><strong>${escHtml(chief.name)}</strong></td>
+                        <td>${escHtml(chief.cpf)}</td>
+                        <td>${chief.actions}</td>
+                        <td>${chief.km.toLocaleString("pt-BR")}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th colspan="2">TOTAL DO MÊS</th>
+                      <th>${month.actions}</th>
+                      <th>${month.km.toLocaleString("pt-BR")}</th>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>`;
+        }).join("")}
+      </div>`;
+
+    const printBtn=$("printReport");
+    if(printBtn){
+      printBtn.disabled=false;
+      printBtn.onclick=()=>printMonthlyReportAutomatic(monthBlocks);
+    }
+  }catch(error){
+    console.error("ARI-CPA7: relatório mensal",error);
+    resultEl.innerHTML=`
+      <div class="item">
+        <strong>Não foi possível carregar o relatório.</strong>
+        <p>${escHtml(error.message||"Erro inesperado.")}</p>
+      </div>`;
+  }
+}
+
+function printMonthlyReportAutomatic(monthBlocks){
+  const blocks=monthBlocks.map(month=>{
+    const monthLabel=new Date(`${month.key}-01T12:00:00`).toLocaleDateString(
+      "pt-BR",{month:"long",year:"numeric"}
+    );
+    const chiefs=[...month.chiefs.values()].sort((a,b)=>{
       if(b.actions!==a.actions)return b.actions-a.actions;
       return b.km-a.km;
     });
 
-    const totalActions=rows.length;
-    const totalKm=summary.reduce((sum,g)=>sum+g.km,0);
+    return `
+      <h2 style="text-transform:capitalize">${escHtml(monthLabel)}</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Chefe de equipe</th>
+            <th>CPF</th>
+            <th>Ações realizadas</th>
+            <th>KM rodados</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${chiefs.map(chief=>`
+            <tr>
+              <td>${escHtml(chief.name)}</td>
+              <td>${escHtml(chief.cpf)}</td>
+              <td style="text-align:center">${chief.actions}</td>
+              <td style="text-align:right">${chief.km.toLocaleString("pt-BR")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th colspan="2">TOTAL DO MÊS</th>
+            <th>${month.actions}</th>
+            <th>${month.km.toLocaleString("pt-BR")}</th>
+          </tr>
+        </tfoot>
+      </table>`;
+  }).join("");
 
-    const monthLabel=new Date(`${month}-01T12:00:00`).toLocaleDateString(
-      "pt-BR",
-      {month:"long",year:"numeric"}
-    );
+  const html=`<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Relatório Mensal ARI-CPA7</title>
+<style>
+body{font-family:Arial,sans-serif;margin:28px;color:#111}
+h1{text-align:center;font-size:20px;margin-bottom:25px}
+h2{font-size:17px;margin-top:28px;border-bottom:1px solid #888;padding-bottom:6px}
+table{width:100%;border-collapse:collapse;margin:12px 0 24px}
+th,td{border:1px solid #999;padding:8px}
+th{font-weight:bold}
+tfoot th{font-size:14px}
+.footer{margin-top:28px;font-size:11px;color:#555}
+@media print{body{margin:15mm}}
+</style>
+</head>
+<body>
+<h1>RELATÓRIO MENSAL DE ATIVIDADES — ARI-CPA7</h1>
+${blocks}
+<div class="footer">
+Documento gerado pelo ARI-CPA7 em ${new Date().toLocaleString("pt-BR")}.
+</div>
+<script>window.onload=()=>window.print();</script>
+</body>
+</html>`;
 
-    $("reportResult").innerHTML=`
-      <div class="item monthly-report" id="monthlyReportPrintable">
-        <h3 style="margin-top:0">RELATÓRIO MENSAL DE ATIVIDADES — ARI-CPA7</h3>
-        <p><strong>Período:</strong> ${escHtml(monthLabel)}</p>
-
-        <div class="report-count">
-          <strong>${totalActions}</strong> ação(ões) realizada(s) —
-          <strong>${totalKm.toLocaleString("pt-BR")}</strong> km rodados
-        </div>
-
-        <div class="table-scroll">
-          <table class="admin-table">
-            <thead>
-              <tr>
-                <th>Equipe / Agente</th>
-                <th>CPF</th>
-                <th>Ações realizadas</th>
-                <th>KM rodados</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${summary.length ? summary.map(g=>`
-                <tr>
-                  <td><strong>${escHtml(g.name)}</strong></td>
-                  <td>${escHtml(g.cpf)}</td>
-                  <td>${g.actions}</td>
-                  <td>${g.km.toLocaleString("pt-BR")}</td>
-                </tr>
-              `).join("") : `
-                <tr>
-                  <td colspan="4" class="empty">Nenhuma atividade registrada neste mês.</td>
-                </tr>
-              `}
-            </tbody>
-            <tfoot>
-              <tr>
-                <th colspan="2">TOTAL DA EQUIPE</th>
-                <th>${totalActions}</th>
-                <th>${totalKm.toLocaleString("pt-BR")}</th>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-
-        <p class="ari-muted">
-          Critério: cada atividade lançada conta como 1 ação. KM rodados =
-          KM final − KM inicial, somente quando os dois valores são válidos.
-        </p>
-      </div>`;
-
-    $("printReport").disabled=false;
-    $("printReport").onclick=()=>printMonthlyReport(monthLabel,summary,totalActions,totalKm);
-    hideMsg($("reportMsg"));
-  }catch(error){
-    console.error("ARI-CPA7: relatório mensal",error);
-    showMsg($("reportMsg"),error.message || "Não foi possível gerar o relatório.");
+  const win=window.open("","_blank");
+  if(!win){
+    alert("O navegador bloqueou a janela do relatório. Permita pop-ups para o ARI-CPA7.");
+    return;
   }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
 }
 
 function printMonthlyReport(monthLabel, summary, totalActions, totalKm){
@@ -1083,9 +1174,6 @@ document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click
 $("activitySearchBtn").addEventListener("click",renderAllActivities);
 
 function initMonthlyReportUI(){
-  const panel=$("reportsPanel");
-  if(!panel)return;
-
   const result=$("reportResult");
   if(!result)return;
 
@@ -1093,24 +1181,21 @@ function initMonthlyReportUI(){
   if(!controls){
     controls=document.createElement("div");
     controls.id="monthlyReportControls";
-    controls.className="grid";
+    controls.className="actions";
     controls.style.marginBottom="12px";
     controls.innerHTML=`
-      <div>
-        <label for="reportMonth"><strong>Mês do relatório</strong></label>
-        <input id="reportMonth" type="month">
-      </div>
-      <div class="actions" style="align-self:end">
-        <button id="generateReport" class="primary" type="button">Gerar relatório mensal</button>
-        <button id="printReport" class="secondary" type="button" disabled>Gerar PDF / Imprimir</button>
-      </div>
-      <p id="reportMsg" class="msg hidden"></p>`;
+      <button id="generateReport" class="primary" type="button">
+        Atualizar relatório mensal
+      </button>
+      <button id="printReport" class="secondary" type="button" disabled>
+        Gerar PDF / Imprimir
+      </button>`;
     result.parentNode.insertBefore(controls,result);
-
-    const now=new Date();
-    $("reportMonth").value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
     $("generateReport").addEventListener("click",generateDemoReport);
   }
+
+  /* Abre mostrando automaticamente todos os meses. */
+  generateDemoReport();
 }
 
 document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",()=>{
