@@ -3,8 +3,8 @@
   Configure SUPABASE_URL and SUPABASE_ANON_KEY before deployment.
   This frontend expects the SQL schema in schema.sql.
 */
-const SUPABASE_URL = "COLOQUE_AQUI_A_URL_DO_SUPABASE";
-const SUPABASE_ANON_KEY = "COLOQUE_AQUI_A_CHAVE_ANON";
+const SUPABASE_URL = "https://wvaottspnimufvmogjyd.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Js37MZq3SV1u9L1A7csf7Q_zW-ywRMl";
 
 const DEMO_ADMIN = { cpf: '82011435153', password: '725120', name: 'Administrador ARI-CPA7' };
 const DEMO_OPERATOR = { cpf: '11144477735', password: '123456', name: 'Operador de Campo - TESTE' };
@@ -33,7 +33,12 @@ function cpfValid(cpf){
   sum=0; for(let i=0;i<10;i++) sum += +cpf[i]*(11-i);
   let d2=(sum*10)%11; if(d2===10)d2=0; return d2===+cpf[10];
 }
-function emailForCpf(cpf){ return `${onlyDigits(cpf)}@login.ari-cpa7.local`; }
+async function emailForCpf(cpf){
+  if(!sb) return `${onlyDigits(cpf)}@login.ari-cpa7.local`;
+  const {data,error}=await sb.rpc("get_login_email", {p_cpf: onlyDigits(cpf)});
+  if(error || !data) return null;
+  return data;
+}
 function showMsg(el,text){el.textContent=text;el.classList.remove("hidden");}
 function hideMsg(el){el.classList.add("hidden");}
 
@@ -67,7 +72,9 @@ $("loginForm").addEventListener("submit", async e=>{
     showMsg($("loginMsg"),"CPF ou senha inválidos.");
     return;
   }
-  const {data,error}=await sb.auth.signInWithPassword({email:emailForCpf(cpf),password});
+  const loginEmail = await emailForCpf(cpf);
+  if(!loginEmail){showMsg($("loginMsg"),"CPF ou senha inválidos.");return}
+  const {data,error}=await sb.auth.signInWithPassword({email:loginEmail,password});
   if(error){showMsg($("loginMsg"),"CPF ou senha inválidos.");return}
   await loadProfile(data.user.id);
 });
