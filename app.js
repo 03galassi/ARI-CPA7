@@ -1207,5 +1207,5 @@ document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click"
   if(btn.dataset.panel==="reportsPanel")initMonthlyReportUI();
 }));
 
-document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click",hideAdminPanels);
+document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click",hideAdminPanels));
 $("activitySearchBtn").addEventListener("click",renderAllActivities);
