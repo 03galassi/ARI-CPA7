@@ -469,7 +469,13 @@ function openActivityPdf(a){
 }
 
 /* ===== Painel administrativo ===== */
-const demoUsers = demoAccounts.map(u=>({id:u.id,name:u.name,cpf:u.cpf,role:u.role==='admin'?'Administrador':'Agente de Campo',status:u.status==='ativo'?'Ativo':'Bloqueado'}));
+const demoUsers = demoAccounts.map(u=>({
+  id:u.id,
+  name:u.name,
+  cpf:u.cpf,
+  role:u.role==='admin'?'Administrador':'Agente de Campo',
+  status:u.status==='ativo'?'Ativo':'Bloqueado'
+}));
 let demoHistory = [
   {date:new Date().toLocaleString("pt-BR"), user:"82011435153", action:"Login administrativo", detail:"Acesso ao painel"}
 ];
@@ -483,82 +489,238 @@ function hideAdminPanels(){
   document.querySelectorAll(".adminPanel").forEach(p=>p.classList.add("hidden"));
   $("adminHome").classList.remove("hidden");
 }
-function renderDemoUsers(){
-  const rows=demoAccounts.map(u=>`<tr>
+
+/* O administrador agora é identificado pelo perfil real do Supabase.
+   A regra antiga que exigia id === "demo-admin" foi removida. */
+function isAdminUser(){
+  return !!currentProfile &&
+         currentProfile.role === "admin" &&
+         currentProfile.status === "ativo";
+}
+
+async function renderDemoUsers(){
+  let users = [];
+
+  if(sb){
+    const {data,error} = await sb
+      .from("profiles")
+      .select("id,name,cpf,role,status,auth_email")
+      .order("name",{ascending:true});
+
+    if(error){
+      console.error("ARI-CPA7: erro ao carregar usuários", error);
+      $("usersContent").innerHTML =
+        '<div class="empty">Não foi possível carregar os usuários do Supabase.</div>';
+      return;
+    }
+    users = data || [];
+  }else{
+    users = demoAccounts;
+  }
+
+  const rows = users.map(u=>`<tr>
     <td>${escHtml(u.name)}</td>
     <td>${escHtml(u.cpf)}</td>
     <td>${u.role==='admin'?'Administrador':'Agente de Campo'}</td>
-    <td class="status ${u.status}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
+    <td class="status ${u.status==='ativo'?'ativo':'bloqueado'}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
     <td class="actions-cell">
-      <button class="secondary user-edit" data-id="${u.id}">Editar</button>
-      <button class="danger user-delete" data-id="${u.id}">Excluir</button>
+      <button class="secondary user-edit" data-id="${escHtml(u.id)}">Editar</button>
+      ${!sb ? `<button class="danger user-delete" data-id="${escHtml(u.id)}">Excluir</button>` : ""}
     </td>
-  </tr>`).join('');
+  </tr>`).join("");
+
   $("usersContent").innerHTML = `
     <form id="userForm" class="grid admin-user-form">
       <input type="hidden" id="editingUserId" value="">
       <div><label>Nome completo</label><input id="newUserName" required></div>
       <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
-      <div><label>Senha</label><input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" required placeholder="6 dígitos"></div>
+      <div>
+        <label>Senha</label>
+        <input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" placeholder="6 dígitos">
+        <small class="muted">Na edição de usuário real, a senha não é alterada por esta tela.</small>
+      </div>
       <div><label>Perfil</label><select id="newUserRole"><option value="operator">Agente de Campo</option><option value="admin">Administrador</option></select></div>
-      <div class="actions full"><button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button><button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button></div>
+      <div class="actions full">
+        <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
+        <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
+      </div>
     </form>
     <p id="userMsg" class="msg hidden"></p>
     <h3>Usuários cadastrados</h3>
     <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
   const cpfInput=$("newUserCpf");
-  cpfInput.addEventListener('input',e=>{let v=onlyDigits(e.target.value).slice(0,11);e.target.value=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');});
-  $("newUserPassword").addEventListener('input',e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
+  cpfInput.addEventListener('input',e=>{
+    let v=onlyDigits(e.target.value).slice(0,11);
+    e.target.value=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+  });
+  $("newUserPassword").addEventListener('input',e=>{
+    e.target.value=onlyDigits(e.target.value).slice(0,6);
+  });
 
-  $("userForm").addEventListener('submit',e=>{
+  $("userForm").addEventListener('submit',async e=>{
     e.preventDefault();
-    if(currentProfile?.id!=='demo-admin'){showMsg($("userMsg"),'Somente o administrador original pode cadastrar e editar usuários.');return;}
+
+    if(!isAdminUser()){
+      showMsg($("userMsg"),"Somente um administrador ativo pode cadastrar e editar usuários.");
+      return;
+    }
+
     const editingId=$("editingUserId").value;
-    const name=$("newUserName").value.trim(), cpf=onlyDigits(cpfInput.value), password=$("newUserPassword").value, role=$("newUserRole").value;
+    const name=$("newUserName").value.trim();
+    const cpf=onlyDigits(cpfInput.value);
+    const password=$("newUserPassword").value;
+    const role=$("newUserRole").value;
+
     if(!name){showMsg($("userMsg"),'Informe o nome.');return;}
     if(!cpfValid(cpf)){showMsg($("userMsg"),'Informe um CPF válido.');return;}
-    if(password.length!==6){showMsg($("userMsg"),'A senha deve possuir exatamente 6 dígitos.');return;}
+
+    if(sb){
+      /* Edição de usuário real: atualiza o perfil no PostgreSQL.
+         A senha do Auth não pode ser alterada por outro usuário usando a
+         chave publishable; ela continuará sendo administrada pelo fluxo
+         de recuperação de senha. */
+      if(!editingId){
+        showMsg($("userMsg"),
+          "O cadastro de um novo usuário real precisa criar também o usuário no Supabase Auth. Vamos habilitar essa etapa pelo backend seguro na próxima fase.");
+        return;
+      }
+
+      const duplicate = users.some(u=>u.cpf===cpf && u.id!==editingId);
+      if(duplicate){
+        showMsg($("userMsg"),'Este CPF já está cadastrado.');
+        return;
+      }
+
+      const {data,error}=await sb
+        .from("profiles")
+        .update({
+          name:name,
+          cpf:cpf,
+          role:role,
+          updated_at:new Date().toISOString()
+        })
+        .eq("id",editingId)
+        .select("id,name,cpf,role,status")
+        .single();
+
+      if(error){
+        console.error("ARI-CPA7: erro ao editar usuário",error);
+        showMsg($("userMsg"),`Não foi possível salvar as alterações: ${error.message || "verifique a autorização no banco."}`);
+        return;
+      }
+
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Edição de usuário',
+        detail:`${data.name} / ${data.cpf} / ${data.role==='admin'?'Administrador':'Agente de Campo'}`
+      });
+
+      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
+      await renderDemoUsers();
+      return;
+    }
+
+    /* Modo demonstração */
+    if(password.length!==6){
+      showMsg($("userMsg"),'A senha deve possuir exatamente 6 dígitos.');
+      return;
+    }
+
     const duplicate=demoAccounts.some(u=>u.cpf===cpf && u.id!==editingId);
-    if(duplicate){showMsg($("userMsg"),'Este CPF já está cadastrado.');return;}
+    if(duplicate){
+      showMsg($("userMsg"),'Este CPF já está cadastrado.');
+      return;
+    }
 
     if(editingId){
       const account=demoAccounts.find(u=>u.id===editingId);
       if(!account){showMsg($("userMsg"),'Usuário não encontrado.');return;}
-      account.name=name; account.cpf=cpf; account.password=password; account.role=role;
-      demoHistory.push({date:new Date().toLocaleString('pt-BR'),user:currentProfile.cpf,action:'Edição de usuário',detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`});
-      renderDemoUsers();
+      account.name=name;
+      account.cpf=cpf;
+      account.password=password;
+      account.role=role;
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Edição de usuário',
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
+      });
+      await renderDemoUsers();
       showMsg($("userMsg"),'Usuário atualizado com sucesso.');
     }else{
       const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo'};
       demoAccounts.push(account);
-      demoUsers.push({id:account.id,name,cpf,role:role==='admin'?'Administrador':'Agente de Campo',status:'Ativo'});
-      demoHistory.push({date:new Date().toLocaleString('pt-BR'),user:currentProfile.cpf,action:'Cadastro de usuário',detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`});
-      renderDemoUsers();
+      demoUsers.push({
+        id:account.id,
+        name,
+        cpf,
+        role:role==='admin'?'Administrador':'Agente de Campo',
+        status:'Ativo'
+      });
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Cadastro de usuário',
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
+      });
+      await renderDemoUsers();
       showMsg($("userMsg"),'Usuário cadastrado com sucesso.');
     }
   });
 
   $("userCancelEdit").onclick=()=>renderDemoUsers();
-  document.querySelectorAll('.user-edit').forEach(btn=>btn.onclick=()=>{
-    const account=demoAccounts.find(u=>u.id===btn.dataset.id); if(!account)return;
+
+  document.querySelectorAll('.user-edit').forEach(btn=>btn.onclick=async()=>{
+    let account;
+
+    if(sb){
+      const {data,error}=await sb
+        .from("profiles")
+        .select("id,name,cpf,role,status")
+        .eq("id",btn.dataset.id)
+        .single();
+
+      if(error || !data){
+        showMsg($("userMsg"),"Usuário não encontrado.");
+        return;
+      }
+      account=data;
+    }else{
+      account=demoAccounts.find(u=>u.id===btn.dataset.id);
+      if(!account)return;
+    }
+
     $("editingUserId").value=account.id;
-    $("newUserName").value=account.name;
-    $("newUserCpf").value=account.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
-    $("newUserPassword").value=account.password;
-    $("newUserRole").value=account.role;
+    $("newUserName").value=account.name || "";
+    $("newUserCpf").value=onlyDigits(account.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
+    $("newUserPassword").value=sb ? "" : (account.password || "");
+    $("newUserRole").value=account.role || "operator";
     $("userSubmit").textContent='Salvar alterações';
     $("userCancelEdit").classList.remove('hidden');
     window.scrollTo({top:$('usersPanel').offsetTop-10,behavior:'smooth'});
   });
+
   document.querySelectorAll('.user-delete').forEach(btn=>btn.onclick=()=>{
-    if(currentProfile?.id!=='demo-admin')return;
-    const account=demoAccounts.find(u=>u.id===btn.dataset.id); if(!account)return;
-    if(!confirm(`Excluir o usuário ${account.name}?\\n\\nEssa ação não poderá ser desfeita.`))return;
+    if(!isAdminUser())return;
+    const account=demoAccounts.find(u=>u.id===btn.dataset.id);
+    if(!account)return;
+    if(!confirm(`Excluir o usuário ${account.name}?\n\nEssa ação não poderá ser desfeita.`))return;
+
     const idx=demoAccounts.findIndex(u=>u.id===account.id);
     if(idx>=0)demoAccounts.splice(idx,1);
-    const idx2=demoUsers.findIndex(u=>u.id===account.id); if(idx2>=0)demoUsers.splice(idx2,1);
-    demoHistory.push({date:new Date().toLocaleString('pt-BR'),user:currentProfile.cpf,action:'Exclusão de usuário',detail:`${account.name} / ${account.cpf}`});
+
+    const idx2=demoUsers.findIndex(u=>u.id===account.id);
+    if(idx2>=0)demoUsers.splice(idx2,1);
+
+    demoHistory.push({
+      date:new Date().toLocaleString('pt-BR'),
+      user:currentProfile.cpf,
+      action:'Exclusão de usuário',
+      detail:`${account.name} / ${account.cpf}`
+    });
+
     renderDemoUsers();
     showMsg($("userMsg"),'Usuário excluído com sucesso.');
   });
