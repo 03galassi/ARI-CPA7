@@ -86,49 +86,69 @@ async function loadProfile(uid){
   if(data.role==="admin"){adminView.classList.remove("hidden");renderAdminHomeActivities()}else{operatorView.classList.remove("hidden");$("operatorName").textContent=data.name;await loadActivities()}
 }
 
-async function showRecoveryView(){
-  loginView.classList.add("hidden");
-  operatorView.classList.add("hidden");
-  adminView.classList.add("hidden");
-  $("recoveryView").classList.remove("hidden");
-}
-
 $("forgotBtn").addEventListener("click",async()=>{
   const cpf=onlyDigits($("cpf").value);
   if(!cpfValid(cpf)){showMsg($("loginMsg"),"Digite seu CPF válido para iniciar a recuperação.");return}
   if(!sb){
-    showMsg($("loginMsg"),`A recuperação seria enviada para ${RECOVERY_EMAIL}.`);
+    showMsg($("loginMsg"),`A recuperação de senha estará disponível quando o sistema estiver conectado ao Supabase.`);
     return;
   }
-  const email=await emailForCpf(cpf);
-  if(!email){showMsg($("loginMsg"),"Não foi possível localizar um e-mail para este CPF.");return}
-  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});
-  showMsg($("loginMsg"),error?"Não foi possível iniciar a recuperação.":"Enviamos o link de recuperação para o e-mail cadastrado.");
+  const loginEmail = await emailForCpf(cpf);
+  if(!loginEmail){showMsg($("loginMsg"),"Não foi possível localizar um e-mail para este CPF.");return}
+  const redirectTo = `${location.origin}${location.pathname}`;
+  const {error}=await sb.auth.resetPasswordForEmail(loginEmail,{redirectTo});
+  if(error){
+    console.error("ARI-CPA7: erro ao solicitar recuperação", error);
+    showMsg($("loginMsg"),`Não foi possível enviar a recuperação: ${error.message || "verifique a configuração do Supabase."}`);
+    return;
+  }
+  showMsg($("loginMsg"),`Link de recuperação enviado para ${loginEmail}. Verifique seu e-mail.`);
 });
+
+function showResetView(){
+  loginView.classList.add("hidden");
+  operatorView.classList.add("hidden");
+  adminView.classList.add("hidden");
+  $("resetView").classList.remove("hidden");
+  hideMsg($("resetMsg"));
+}
 
 $("newPassword").addEventListener("input",e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
 $("confirmPassword").addEventListener("input",e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
-$("recoveryForm").addEventListener("submit",async e=>{
+
+$("resetForm").addEventListener("submit",async e=>{
   e.preventDefault();
-  hideMsg($("recoveryMsg"));
-  const password=$("newPassword").value, confirm=$("confirmPassword").value;
-  if(password.length!==6){showMsg($("recoveryMsg"),"A senha deve possuir exatamente 6 dígitos.");return}
-  if(password!==confirm){showMsg($("recoveryMsg"),"As senhas não conferem.");return}
-  if(!sb){showMsg($("recoveryMsg"),"Recuperação disponível somente na versão conectada ao Supabase.");return}
+  hideMsg($("resetMsg"));
+  const password=$("newPassword").value;
+  const confirm=$("confirmPassword").value;
+  if(password.length!==6){showMsg($("resetMsg"),"A senha deve possuir exatamente 6 dígitos.");return}
+  if(password!==confirm){showMsg($("resetMsg"),"As senhas não coincidem.");return}
+  if(!sb){showMsg($("resetMsg"),"Sistema de autenticação indisponível.");return}
   const {error}=await sb.auth.updateUser({password});
-  if(error){showMsg($("recoveryMsg"),"Não foi possível alterar a senha: "+error.message);return}
+  if(error){
+    console.error("ARI-CPA7: erro ao alterar senha", error);
+    showMsg($("resetMsg"),`Não foi possível alterar a senha: ${error.message || "tente novamente."}`);
+    return;
+  }
   await sb.auth.signOut();
-  $("recoveryView").classList.add("hidden");
+  $("resetForm").reset();
+  $("resetView").classList.add("hidden");
   loginView.classList.remove("hidden");
-  $("password").value="";
-  showMsg($("loginMsg"),"Senha alterada com sucesso. Faça login com a nova senha.");
+  showMsg($("loginMsg"),"Senha alterada com sucesso. Agora entre com seu CPF e a nova senha.");
 });
 
+$("cancelReset").onclick=async()=>{
+  if(sb) await sb.auth.signOut();
+  $("resetView").classList.add("hidden");
+  loginView.classList.remove("hidden");
+};
+
 if(sb){
-  sb.auth.onAuthStateChange((event,session)=>{
-    if(event==="PASSWORD_RECOVERY") showRecoveryView();
+  sb.auth.onAuthStateChange(async(event, session)=>{
+    if(event === "PASSWORD_RECOVERY"){
+      setTimeout(showResetView, 0);
+    }
   });
-  if(location.hash.includes("type=recovery")) setTimeout(()=>showRecoveryView(),300);
 }
 
 async function logout(){

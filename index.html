@@ -26,19 +26,20 @@
     <p id="loginMsg" class="msg hidden"></p>
   </section>
 
-  <section id="recoveryView" class="card login-card hidden">
+  <section id="resetView" class="card login-card hidden">
     <div class="brand">
       <div class="brand-title">ARI-CPA7</div>
       <div class="brand-subtitle">Definir nova senha</div>
     </div>
-    <form id="recoveryForm">
+    <form id="resetForm">
       <label for="newPassword">Nova senha</label>
       <input id="newPassword" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="6 dígitos" required>
       <label for="confirmPassword">Confirmar nova senha</label>
       <input id="confirmPassword" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="6 dígitos" required>
       <button class="primary" type="submit">Alterar senha</button>
+      <button class="link" type="button" id="cancelReset">Voltar ao login</button>
     </form>
-    <p id="recoveryMsg" class="msg hidden"></p>
+    <p id="resetMsg" class="msg hidden" aria-live="polite"></p>
   </section>
 
   <section id="operatorView" class="hidden">
