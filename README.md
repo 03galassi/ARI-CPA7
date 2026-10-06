@@ -38,7 +38,3 @@ Interface responsiva para lançamento de saída, viatura, KM, destino, descriç�
 
 ## Municípios
 O campo de saída/destino usa os 38 municípios da Mesorregião Sudoeste de Mato Grosso do Sul conforme a classificação geográfica consultada. A lista foi incorporada ao protótipo.
-
-
-## Recuperação de senha
-O fluxo de recuperação retorna para `https://03galassi.github.io/ARI-CPA7/` e apresenta a tela para definir uma nova senha de exatamente 6 dígitos. Cadastre essa URL em Supabase > Authentication > URL Configuration > Redirect URLs.
