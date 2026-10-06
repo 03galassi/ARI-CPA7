@@ -34,10 +34,33 @@ function cpfValid(cpf){
   let d2=(sum*10)%11; if(d2===10)d2=0; return d2===+cpf[10];
 }
 async function emailForCpf(cpf){
-  if(!sb) return `${onlyDigits(cpf)}@login.ari-cpa7.local`;
-  const {data,error}=await sb.rpc("get_login_email", {p_cpf: onlyDigits(cpf)});
-  if(error || !data) return null;
-  return data;
+  const normalized = onlyDigits(cpf);
+  if(!sb) return `${normalized}@login.ari-cpa7.local`;
+
+  // Primeiro usa o RPC pelo cliente Supabase.
+  const rpc = await sb.rpc("get_login_email", {p_cpf: normalized});
+  if(!rpc.error && rpc.data) return String(rpc.data).trim();
+
+  // Fallback direto na API REST do Supabase (útil quando o cache do cliente/RPC estiver desatualizado).
+  try{
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_login_email`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({p_cpf: normalized})
+    });
+    if(resp.ok){
+      const data = await resp.json();
+      if(data) return String(data).trim();
+    }
+    console.error('ARI-CPA7: falha no RPC', rpc.error);
+  }catch(err){
+    console.error('ARI-CPA7: falha no fallback REST', err, rpc.error);
+  }
+  return null;
 }
 function showMsg(el,text){el.textContent=text;el.classList.remove("hidden");}
 function hideMsg(el){el.classList.add("hidden");}
@@ -94,7 +117,7 @@ $("forgotBtn").addEventListener("click",async()=>{
     return;
   }
   const loginEmail = await emailForCpf(cpf);
-  if(!loginEmail){showMsg($("loginMsg"),"Não foi possível localizar um e-mail para este CPF.");return}
+  if(!loginEmail){showMsg($("loginMsg"),"Não foi possível localizar o e-mail deste CPF. Se o cadastro no Supabase estiver correto, atualize a página e tente novamente.");return}
   const redirectTo = `${location.origin}${location.pathname}`;
   const {error}=await sb.auth.resetPasswordForEmail(loginEmail,{redirectTo});
   if(error){
