@@ -26,6 +26,23 @@
     <p id="loginMsg" class="msg hidden"></p>
   </section>
 
+  <section id="recoveryView" class="card login-card hidden">
+    <div class="brand">
+      <div class="brand-title">ARI-CPA7</div>
+      <div class="brand-subtitle">Definir nova senha</div>
+    </div>
+    <p class="muted">Crie uma nova senha de acesso com exatamente 6 números.</p>
+    <form id="recoveryForm">
+      <label for="newPassword">Nova senha</label>
+      <input id="newPassword" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="6 dígitos" required>
+      <label for="confirmPassword">Confirmar nova senha</label>
+      <input id="confirmPassword" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="6 dígitos" required>
+      <button class="primary" type="submit">Salvar nova senha</button>
+      <button class="link" type="button" id="cancelRecovery">Voltar ao login</button>
+    </form>
+    <p id="recoveryMsg" class="msg hidden" aria-live="polite"></p>
+  </section>
+
   <section id="operatorView" class="hidden">
     <header class="topbar card">
       <div><strong>ARI-CPA7</strong><span id="operatorName"></span></div>

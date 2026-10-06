@@ -22,7 +22,7 @@ const configured = !SUPABASE_URL.includes("COLOQUE_AQUI") && !SUPABASE_ANON_KEY.
 const sb = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const $ = id => document.getElementById(id);
-const loginView = $("loginView"), operatorView = $("operatorView"), adminView = $("adminView");
+const loginView = $("loginView"), recoveryView = $("recoveryView"), operatorView = $("operatorView"), adminView = $("adminView");
 let currentProfile = null;
 
 function onlyDigits(v){ return (v || "").replace(/\D/g,""); }
@@ -90,12 +90,63 @@ $("forgotBtn").addEventListener("click",async()=>{
   const cpf=onlyDigits($("cpf").value);
   if(!cpfValid(cpf)){showMsg($("loginMsg"),"Digite seu CPF válido para iniciar a recuperação.");return}
   if(!sb){
-    showMsg($("loginMsg"),`A solicitação de recuperação será encaminhada para ${RECOVERY_EMAIL}.`);
+    showMsg($("loginMsg"),"A recuperação real será enviada pelo Supabase.");
     return;
   }
-  const {error}=await sb.auth.resetPasswordForEmail(RECOVERY_EMAIL,{redirectTo:location.origin+location.pathname});
-  showMsg($("loginMsg"),error?"Não foi possível iniciar a recuperação.":"A solicitação de recuperação foi encaminhada para o e-mail autorizado.");
+  const loginEmail = await emailForCpf(cpf);
+  if(!loginEmail){showMsg($("loginMsg"),"Não foi possível localizar um e-mail para este CPF.");return}
+  const redirectTo = "https://03galassi.github.io/ARI-CPA7/";
+  const {error}=await sb.auth.resetPasswordForEmail(loginEmail,{redirectTo});
+  showMsg($("loginMsg"),error?`Não foi possível iniciar a recuperação: ${error.message}`:"Link de recuperação enviado para o e-mail cadastrado.");
 });
+
+function showRecoveryView(){
+  loginView.classList.add("hidden");
+  operatorView.classList.add("hidden");
+  adminView.classList.add("hidden");
+  recoveryView.classList.remove("hidden");
+  $("newPassword").value="";
+  $("confirmPassword").value="";
+  hideMsg($("recoveryMsg"));
+}
+
+function showLoginView(){
+  recoveryView.classList.add("hidden");
+  operatorView.classList.add("hidden");
+  adminView.classList.add("hidden");
+  loginView.classList.remove("hidden");
+}
+
+$("newPassword").addEventListener("input",e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
+$("confirmPassword").addEventListener("input",e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
+
+$("recoveryForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  hideMsg($("recoveryMsg"));
+  const p1=$("newPassword").value;
+  const p2=$("confirmPassword").value;
+  if(!/^\d{6}$/.test(p1)){showMsg($("recoveryMsg"),"A nova senha deve possuir exatamente 6 dígitos.");return}
+  if(p1!==p2){showMsg($("recoveryMsg"),"As senhas não conferem.");return}
+  if(!sb){showMsg($("recoveryMsg"),"Recuperação indisponível no modo demonstração.");return}
+  const {error}=await sb.auth.updateUser({password:p1});
+  if(error){showMsg($("recoveryMsg"),`Não foi possível alterar a senha: ${error.message}`);return}
+  await sb.auth.signOut();
+  showLoginView();
+  showMsg($("loginMsg"),"Senha alterada com sucesso. Faça login com seu CPF e a nova senha.");
+});
+
+$("cancelRecovery").addEventListener("click",async()=>{
+  if(sb) await sb.auth.signOut();
+  showLoginView();
+});
+
+if(sb){
+  sb.auth.onAuthStateChange((event, session)=>{
+    if(event==="PASSWORD_RECOVERY" && session){
+      setTimeout(showRecoveryView,0);
+    }
+  });
+}
 
 async function logout(){
   if(sb) await sb.auth.signOut();
