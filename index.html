@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ARI-CPA7</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main class="app">
+  <section id="loginView" class="card login-card">
+    <div class="brand">
+      <div class="brand-title">ARI-CPA7</div>
+      <div class="brand-subtitle">Controle de Atividades de Inteligência</div>
+    </div>
+    <form id="loginForm">
+      <label for="cpf">CPF</label>
+      <input id="cpf" inputmode="numeric" maxlength="14" autocomplete="username"
+             placeholder="000.000.000-00" required>
+      <label for="password">Senha</label>
+      <input id="password" type="password" inputmode="numeric" maxlength="6"
+             autocomplete="current-password" placeholder="6 dígitos" required>
+      <button class="primary" type="submit">Entrar</button>
+      <button class="link" type="button" id="forgotBtn">Esqueci minha senha</button>
+    </form>
+    <p id="loginMsg" class="msg hidden"></p>
+  </section>
+
+  <section id="operatorView" class="hidden">
+    <header class="topbar card">
+      <div><strong>ARI-CPA7</strong><span id="operatorName"></span></div>
+      <button id="logoutOperator" class="secondary">Sair</button>
+    </header>
+
+    <section class="card field-home">
+      <div class="section-head">
+        <div>
+          <h2>Equipe de Campo</h2>
+          <p>Registre a atividade e complete o retorno quando a equipe retornar.</p>
+        </div>
+        <button id="newActivity" class="primary">+ Nova atividade</button>
+      </div>
+      <div class="field-summary">
+        <div><strong id="fieldCount">0</strong><span>atividades</span></div>
+        <div><strong id="fieldKm">0</strong><span>KM apurados</span></div>
+      </div>
+      <div id="myActivities"></div>
+    </section>
+
+    <section id="activityEditor" class="card hidden">
+      <div class="section-head">
+        <div><h2 id="editorTitle">Nova atividade</h2><p>Preencha os dados da saída.</p></div>
+        <button class="secondary" id="cancelEdit" type="button">Fechar</button>
+      </div>
+      <form id="activityForm" class="grid">
+        <input type="hidden" id="activityId">
+
+        <div class="full form-section-title">SAÍDA</div>
+        <div><label>Local de saída</label><input id="saidaLocal" required></div>
+        <div><label>Data de saída</label><input id="saidaData" type="date" required></div>
+        <div><label>Hora de saída</label><input id="saidaHora" type="time" required></div>
+        <div><label>Viatura</label><input id="viatura" required list="viaturasDisponiveis" placeholder="Selecione ou digite/edite a viatura"><small class="muted">As viaturas cadastradas pelo administrador aparecem como sugestão, mas podem ser editadas no lançamento.</small></div>
+        <div><label>KM inicial</label><input id="kmInicial" type="number" min="0" required inputmode="numeric"></div>
+        <div><label>Local de destino</label><input id="destino" required></div>
+
+        <div class="full form-section-title">ATIVIDADE</div>
+        <div class="full"><label>Descrição da atividade</label><textarea id="descricao" required></textarea></div>
+        <div class="full"><label>Informação obtida</label><textarea id="informacao" required></textarea></div>
+
+        <div class="full form-section-title">RETORNO</div>
+        <div><label>Local de retorno</label><input id="retornoLocal" placeholder="Selecione a cidade de retorno"></div>
+        <div><label>KM final</label><input id="kmFinal" type="number" min="0" inputmode="numeric"></div>
+        <div><label>Data de retorno</label><input id="retornoData" type="date"></div>
+        <div><label>Hora de retorno</label><input id="retornoHora" type="time"></div>
+
+        <div class="actions full">
+          <button class="primary" type="submit">Salvar atividade</button>
+          <button class="secondary" type="button" id="cancelEdit2">Cancelar</button>
+        </div>
+      </form>
+      <p id="activityMsg" class="msg hidden" aria-live="polite"></p>
+    </section>
+  </section>
+
+  <section id="adminView" class="hidden">
+    <header class="topbar card">
+      <div><strong>ARI-CPA7</strong><span>Painel do Administrador</span></div>
+      <button id="logoutAdmin" class="secondary">Sair</button>
+    </header>
+    <section id="adminHome" class="card">
+      <h2>Administração</h2>
+      <p>Selecione uma opção para consultar ou administrar o sistema.</p>
+      <div class="admin-grid">
+        <button class="tile adminBtn" data-panel="usersPanel">Usuários</button>
+        <button class="tile adminBtn" data-panel="activitiesPanel">Atividades</button>
+        <button class="tile adminBtn" data-panel="reportsPanel">Relatórios</button>
+        <button class="tile adminBtn" data-panel="historyPanel">Histórico de alterações</button>
+        <button class="tile adminBtn" data-panel="vehiclesPanel">Viaturas</button>
+      </div>
+    </section>
+
+    <section id="adminReportsHome" class="card admin-home-reports">
+      <div class="section-head"><div><h2>Relatórios lançados pela equipe</h2><p>Todos os relatórios da equipe de campo, do mais recente para o mais antigo.</p></div><button class="secondary adminBtn" data-panel="activitiesPanel">Ver detalhes</button></div>
+      <div id="adminHomeActivities"></div>
+    </section>
+
+    <section id="usersPanel" class="card adminPanel hidden">
+      <div class="section-head"><div><h2>Usuários</h2><p>Cadastro e controle de acesso.</p></div><button class="secondary backAdmin">Voltar</button></div>
+      <div id="usersContent"></div>
+    </section>
+
+    <section id="activitiesPanel" class="card adminPanel hidden">
+      <div class="section-head"><div><h2>Atividades</h2><p>Consulta geral das atividades autorizadas.</p></div><button class="secondary backAdmin">Voltar</button></div>
+      <div class="filter-row"><input id="activitySearch" placeholder="Pesquisar por viatura, destino ou CPF"><button id="activitySearchBtn" class="primary">Pesquisar</button></div>
+      <div id="allActivitiesContent"></div>
+    </section>
+
+    <section id="reportsPanel" class="card adminPanel hidden">
+      <div class="section-head"><div><h2>Relatórios</h2><p>Geração de relatórios da base disponível.</p></div><button class="secondary backAdmin">Voltar</button></div>
+      <div class="report-box">
+        <label>Período inicial</label><input id="reportStart" type="date">
+        <label>Período final</label><input id="reportEnd" type="date">
+        <div class="actions"><button id="generateReport" class="primary">Gerar relatório</button><button id="printReport" class="secondary" disabled>Imprimir</button></div>
+      </div>
+      <div id="reportResult"></div>
+    </section>
+
+    <section id="vehiclesPanel" class="card adminPanel hidden">
+      <div class="section-head"><div><h2>Viaturas</h2><p>Cadastre as viaturas que aparecerão para a equipe de campo.</p></div><button class="secondary backAdmin">Voltar</button></div>
+      <form id="vehicleForm" class="grid">
+        <div><label>Identificação / placa</label><input id="vehiclePlate" required placeholder="Ex.: HTO-3611"></div>
+        <div><label>Descrição</label><input id="vehicleDesc" placeholder="Ex.: Viatura descaracterizada"></div>
+        <div><label>Ativa</label><select id="vehicleStatus"><option value="ativa">Ativa</option><option value="inativa">Inativa</option></select></div>
+        <div class="actions full"><button class="primary" type="submit">Cadastrar viatura</button></div>
+      </form>
+      <div id="vehiclesContent"></div>
+    </section>
+
+    <section id="historyPanel" class="card adminPanel hidden">
+      <div class="section-head"><div><h2>Histórico de alterações</h2><p>Registro de eventos do sistema.</p></div><button class="secondary backAdmin">Voltar</button></div>
+      <div id="historyContent"></div>
+    </section>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
