@@ -3,7 +3,7 @@
   Configure SUPABASE_URL and SUPABASE_ANON_KEY before deployment.
   This frontend expects the SQL schema in schema.sql.
 */
-const SUPABASE_URL = "https://wvaottspnimufvmogjyd.supabase.co";
+const SUPABASE_URL = "https://wwaottspnimufvmogjyd.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Js37MZq3SV1u9L1A7csf7Q_zW-ywRMl";
 
 const DEMO_ADMIN = { cpf: '82011435153', password: '725120', name: 'Administrador ARI-CPA7' };
