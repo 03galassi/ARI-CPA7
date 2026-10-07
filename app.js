@@ -330,8 +330,7 @@ $("activityForm").addEventListener("submit",async e=>{
     retorno_local: $("retornoLocal").value || null,
     km_final: $("kmFinal").value ? Number($("kmFinal").value) : null,
     retorno_data: $("retornoData").value || null,
-    retorno_hora: $("retornoHora").value || null,
-    owner_id: currentProfile.id
+    retorno_hora: $("retornoHora").value || null
   };
 
   if(!payload.saida_local || !payload.saida_data || !payload.saida_hora || !payload.viatura ||
@@ -390,10 +389,23 @@ $("activityForm").addEventListener("submit",async e=>{
   }
 
   let result;
+  if(!currentProfile?.id){
+    showMsg($("activityMsg"),"Usuário não identificado. Faça login novamente.");
+    return;
+  }
+
   if(id){
-    result = await sb.from("activities").update(payload).eq("id",id).eq("owner_id",currentProfile.id);
+    // O Chefe de Equipe só pode editar uma atividade que pertença a ele.
+    result = await sb.from("activities")
+      .update(payload)
+      .eq("id",id)
+      .eq("owner_id",currentProfile.id);
   }else{
-    result = await sb.from("activities").insert(payload);
+    // Vincula explicitamente a atividade ao perfil/usuário autenticado.
+    result = await sb.from("activities").insert({
+      ...payload,
+      owner_id: currentProfile.id
+    });
   }
 
   if(result.error){
