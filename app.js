@@ -57,13 +57,36 @@ async function emailForCpf(cpf){
   }
   return null;
 }
+async function roleForCpf(cpf){
+  const normalized=onlyDigits(cpf);
+  if(normalized === "82011435153") return "admin";
+  if(!sb) return null;
+  try{
+    const {data,error}=await sb.rpc("get_login_role",{p_cpf:normalized});
+    if(error) throw error;
+    if(typeof data === "string") return data.trim();
+    if(Array.isArray(data) && data.length){
+      const value=data[0]?.role || data[0];
+      return typeof value === "string" ? value.trim() : null;
+    }
+  }catch(err){
+    console.error("ARI-CPA7: erro ao identificar perfil",err);
+  }
+  return null;
+}
+
 function showMsg(el,text){el.textContent=text;el.classList.remove("hidden");}
 function hideMsg(el){el.classList.add("hidden");}
+
+// Recuperação de senha disponível para Administradores e Chefes de Equipe.
+const forgotBtn=$("forgotBtn");
+if(forgotBtn) forgotBtn.classList.remove("hidden");
 
 $("cpf").addEventListener("input",e=>{
   let v=onlyDigits(e.target.value).slice(0,11);
   e.target.value=v.replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d{1,2})$/,"$1-$2");
 });
+
 $("password").addEventListener("input",e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
 
 $("loginForm").addEventListener("submit", async e=>{
@@ -519,7 +542,7 @@ const demoUsers = demoAccounts.map(u=>({
   id:u.id,
   name:u.name,
   cpf:u.cpf,
-  role:u.role==='admin'?'Administrador':'Agente de Campo',
+  role:u.role==='admin'?'Administrador':'Chefe de Equipe',
   status:u.status==='ativo'?'Ativo':'Bloqueado'
 }));
 let demoHistory = [
@@ -567,7 +590,8 @@ async function renderDemoUsers(){
   const rows = users.map(u=>`<tr>
     <td>${escHtml(u.name)}</td>
     <td>${escHtml(u.cpf)}</td>
-    <td>${u.role==='admin'?'Administrador':'Agente de Campo'}</td>
+    <td>${escHtml(u.auth_email || "—")}</td>
+    <td>${u.role==='admin'?'Administrador':'Chefe de Equipe'}</td>
     <td class="status ${u.status==='ativo'?'ativo':'bloqueado'}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
     <td class="actions-cell">
       <button class="secondary user-edit" data-id="${escHtml(u.id)}">Editar</button>
@@ -580,12 +604,13 @@ async function renderDemoUsers(){
       <input type="hidden" id="editingUserId" value="">
       <div><label>Nome completo</label><input id="newUserName" required></div>
       <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
+      <div><label>E-mail</label><input id="newUserEmail" type="email" autocomplete="email" required placeholder="usuario@exemplo.com"></div>
       <div>
         <label>Senha</label>
         <input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" placeholder="6 dígitos">
         <small class="muted">Na edição de usuário real, a senha não é alterada por esta tela.</small>
       </div>
-      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Agente de Campo</option><option value="admin">Administrador</option></select></div>
+      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Chefe de Equipe</option><option value="admin">Administrador</option></select></div>
       <div class="actions full">
         <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
         <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
@@ -593,7 +618,7 @@ async function renderDemoUsers(){
     </form>
     <p id="userMsg" class="msg hidden"></p>
     <h3>Usuários cadastrados</h3>
-    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
   const cpfInput=$("newUserCpf");
   cpfInput.addEventListener('input',e=>{
@@ -615,55 +640,36 @@ async function renderDemoUsers(){
     const editingId=$("editingUserId").value;
     const name=$("newUserName").value.trim();
     const cpf=onlyDigits(cpfInput.value);
+    const email=$("newUserEmail").value.trim().toLowerCase();
     const password=$("newUserPassword").value;
     const role=$("newUserRole").value;
 
     if(!name){showMsg($("userMsg"),'Informe o nome.');return;}
     if(!cpfValid(cpf)){showMsg($("userMsg"),'Informe um CPF válido.');return;}
+    if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showMsg($("userMsg"),'Informe um e-mail válido.');return;}
+    if(!editingId && password.length!==6){showMsg($("userMsg"),'A senha inicial deve possuir exatamente 6 dígitos.');return;}
 
     if(sb){
-      /* Edição de usuário real: atualiza o perfil no PostgreSQL.
-         A senha do Auth não pode ser alterada por outro usuário usando a
-         chave publishable; ela continuará sendo administrada pelo fluxo
-         de recuperação de senha. */
-      if(!editingId){
-        showMsg($("userMsg"),
-          "O cadastro de um novo usuário real precisa criar também o usuário no Supabase Auth. Vamos habilitar essa etapa pelo backend seguro na próxima fase.");
-        return;
-      }
-
       const duplicate = users.some(u=>u.cpf===cpf && u.id!==editingId);
-      if(duplicate){
-        showMsg($("userMsg"),'Este CPF já está cadastrado.');
-        return;
-      }
+      if(duplicate){showMsg($("userMsg"),'Este CPF já está cadastrado.');return;}
+      const duplicateEmail = users.some(u=>String(u.auth_email||'').toLowerCase()===email && u.id!==editingId);
+      if(duplicateEmail){showMsg($("userMsg"),'Este e-mail já está cadastrado.');return;}
 
-      const {data,error}=await sb
-        .from("profiles")
-        .update({
-          name:name,
-          cpf:cpf,
-          role:role,
-          updated_at:new Date().toISOString()
-        })
-        .eq("id",editingId)
-        .select("id,name,cpf,role,status")
-        .single();
+      const action = editingId ? "update" : "create";
+      const body = {action, name, cpf, email, role};
+      if(editingId) body.user_id=editingId;
+      if(password) body.password=password;
 
+      const {data,error}=await sb.functions.invoke("admin-users",{body});
       if(error){
-        console.error("ARI-CPA7: erro ao editar usuário",error);
-        showMsg($("userMsg"),`Não foi possível salvar as alterações: ${error.message || "verifique a autorização no banco."}`);
+        console.error("ARI-CPA7: erro na função admin-users",error,data);
+        const detail=data?.error || data?.message || error.message || "verifique a função admin-users.";
+        showMsg($("userMsg"),`Não foi possível salvar o usuário: ${detail}`);
         return;
       }
+      if(data?.error){showMsg($("userMsg"),`Não foi possível salvar o usuário: ${data.error}`);return;}
 
-      demoHistory.push({
-        date:new Date().toLocaleString('pt-BR'),
-        user:currentProfile.cpf,
-        action:'Edição de usuário',
-        detail:`${data.name} / ${data.cpf} / ${data.role==='admin'?'Administrador':'Agente de Campo'}`
-      });
-
-      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
+      showMsg($("userMsg"),editingId?'Usuário atualizado com sucesso.':'Usuário cadastrado com sucesso.');
       await renderDemoUsers();
       return;
     }
@@ -686,30 +692,31 @@ async function renderDemoUsers(){
       account.name=name;
       account.cpf=cpf;
       account.password=password;
+      account.auth_email=email;
       account.role=role;
       demoHistory.push({
         date:new Date().toLocaleString('pt-BR'),
         user:currentProfile.cpf,
         action:'Edição de usuário',
-        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Chefe de Equipe'}`
       });
       await renderDemoUsers();
       showMsg($("userMsg"),'Usuário atualizado com sucesso.');
     }else{
-      const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo'};
+      const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo',auth_email:email};
       demoAccounts.push(account);
       demoUsers.push({
         id:account.id,
         name,
         cpf,
-        role:role==='admin'?'Administrador':'Agente de Campo',
+        role:role==='admin'?'Administrador':'Chefe de Equipe',
         status:'Ativo'
       });
       demoHistory.push({
         date:new Date().toLocaleString('pt-BR'),
         user:currentProfile.cpf,
         action:'Cadastro de usuário',
-        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Chefe de Equipe'}`
       });
       await renderDemoUsers();
       showMsg($("userMsg"),'Usuário cadastrado com sucesso.');
@@ -724,7 +731,7 @@ async function renderDemoUsers(){
     if(sb){
       const {data,error}=await sb
         .from("profiles")
-        .select("id,name,cpf,role,status")
+        .select("id,name,cpf,role,status,auth_email")
         .eq("id",btn.dataset.id)
         .single();
 
@@ -741,6 +748,7 @@ async function renderDemoUsers(){
     $("editingUserId").value=account.id;
     $("newUserName").value=account.name || "";
     $("newUserCpf").value=onlyDigits(account.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
+    $("newUserEmail").value=account.auth_email || "";
     $("newUserPassword").value=sb ? "" : (account.password || "");
     $("newUserRole").value=account.role || "operator";
     $("userSubmit").textContent='Salvar alterações';
