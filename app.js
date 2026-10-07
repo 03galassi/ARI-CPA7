@@ -176,34 +176,14 @@ async function logout(){
 $("logoutOperator").onclick=logout;$("logoutAdmin").onclick=logout;
 
 async function loadActivities(){
-  if(!sb || !currentProfile?.id) return;
-
-  // O chefe de equipe deve enxergar e editar somente os próprios lançamentos.
-  // O ID do usuário autenticado é a referência segura do proprietário.
-  const {data,error}=await sb.from("activities")
-    .select("*")
-    .eq("owner_id", currentProfile.id)
-    .order("saida_data",{ascending:false})
-    .order("saida_hora",{ascending:false});
-
-  const box=$("activityList") || $("myActivities");
-  if(!box) return;
-  box.innerHTML="";
-  if(error){
-    console.error("ARI-CPA7: erro ao carregar atividades do chefe", error);
-    box.textContent="Não foi possível carregar suas atividades.";
-    return;
-  }
-  if(!data || !data.length){
-    box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';
-    return;
-  }
+  const {data,error}=await sb.from("activities").select("*").order("saida_data",{ascending:false}).order("saida_hora",{ascending:false});
+  const box=$("activityList"); box.innerHTML="";
+  if(error){box.textContent="Não foi possível carregar as atividades.";return}
+  if(!data.length){box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';return}
   data.forEach(a=>{
-    const el=document.createElement("article");
-    el.className="item";
-    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>${a.saida_local||"—"} → ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
-    el.querySelector("button").onclick=()=>editActivity(a);
-    box.appendChild(el);
+    const el=document.createElement("article");el.className="item";
+    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>Destino: ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
+    el.querySelector("button").onclick=()=>editActivity(a);box.appendChild(el);
   });
 }
 
@@ -341,16 +321,10 @@ $("activityForm").addEventListener("submit",async e=>{
 
   let result;
   if(id){
-    // Só permite ao chefe alterar um lançamento que pertença a ele.
-    result = await sb.from("activities")
-      .update(payload)
-      .eq("id",id)
-      .eq("owner_id",currentProfile.id);
+    result = await sb.from("activities").update(payload).eq("id",id);
   }else{
-    // Gravamos explicitamente o proprietário. Isso garante que o lançamento
-    // permaneça vinculado ao chefe mesmo após sair e entrar novamente.
-    result = await sb.from("activities")
-      .insert({...payload, owner_id:currentProfile.id});
+    // owner_id é definido pelo trigger/RLS do banco a partir do usuário autenticado.
+    result = await sb.from("activities").insert(payload);
   }
 
   if(result.error){
@@ -495,13 +469,7 @@ function openActivityPdf(a){
 }
 
 /* ===== Painel administrativo ===== */
-const demoUsers = demoAccounts.map(u=>({
-  id:u.id,
-  name:u.name,
-  cpf:u.cpf,
-  role:u.role==='admin'?'Administrador':'Agente de Campo',
-  status:u.status==='ativo'?'Ativo':'Bloqueado'
-}));
+const demoUsers = demoAccounts.map(u=>({id:u.id,name:u.name,cpf:u.cpf,role:u.role==='admin'?'Administrador':'Agente de Campo',status:u.status==='ativo'?'Ativo':'Bloqueado'}));
 let demoHistory = [
   {date:new Date().toLocaleString("pt-BR"), user:"82011435153", action:"Login administrativo", detail:"Acesso ao painel"}
 ];
@@ -515,241 +483,269 @@ function hideAdminPanels(){
   document.querySelectorAll(".adminPanel").forEach(p=>p.classList.add("hidden"));
   $("adminHome").classList.remove("hidden");
 }
-
-/* O administrador agora é identificado pelo perfil real do Supabase.
-   A regra antiga que exigia id === "demo-admin" foi removida. */
-function isAdminUser(){
-  return !!currentProfile &&
-         currentProfile.role === "admin" &&
-         currentProfile.status === "ativo";
-}
-
 async function renderDemoUsers(){
-  let users = [];
+  const usersBox = $("usersContent");
 
+  // Cadastro real: Supabase + Edge Function admin-users.
   if(sb){
-    const {data,error} = await sb
-      .from("profiles")
-      .select("id,name,cpf,role,status,auth_email")
-      .order("name",{ascending:true});
+    usersBox.innerHTML = `
+      <form id="userForm" class="grid admin-user-form">
+        <input type="hidden" id="editingUserId" value="">
+        <div><label>Nome completo</label><input id="newUserName" required></div>
+        <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
+        <div><label>E-mail</label><input id="newUserEmail" type="email" autocomplete="email" required placeholder="usuario@exemplo.com"></div>
+        <div><label>Senha</label><input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="6 dígitos"></div>
+        <div><label>Perfil</label>
+          <select id="newUserRole">
+            <option value="operator">Agente de Campo</option>
+            <option value="admin">Administrador</option>
+          </select>
+        </div>
+        <div class="actions full">
+          <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
+          <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
+        </div>
+      </form>
+      <p id="userMsg" class="msg hidden"></p>
+      <h3>Usuários cadastrados</h3>
+      <div id="usersTableBox" class="table-scroll"><div class="empty">Carregando usuários...</div></div>
+    `;
 
-    if(error){
-      console.error("ARI-CPA7: erro ao carregar usuários", error);
-      $("usersContent").innerHTML =
-        '<div class="empty">Não foi possível carregar os usuários do Supabase.</div>';
-      return;
+    const cpfInput = $("newUserCpf");
+    cpfInput.addEventListener("input", e => {
+      let v = onlyDigits(e.target.value).slice(0,11);
+      e.target.value = v
+        .replace(/(\d{3})(\d)/,"$1.$2")
+        .replace(/(\d{3})(\d)/,"$1.$2")
+        .replace(/(\d{3})(\d{1,2})$/,"$1-$2");
+    });
+    $("newUserPassword").addEventListener("input", e => {
+      e.target.value = onlyDigits(e.target.value).slice(0,6);
+    });
+
+    async function callAdminUsers(action, body={}){
+      const {data: sessionData, error: sessionError} = await sb.auth.getSession();
+      if(sessionError || !sessionData?.session?.access_token){
+        throw new Error("Sessão administrativa não encontrada. Faça login novamente.");
+      }
+
+      const response = await fetch(
+        `${SUPABASE_URL}/functions/v1/admin-users`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${sessionData.session.access_token}`
+          },
+          body: JSON.stringify({action, ...body})
+        }
+      );
+
+      let result = {};
+      try { result = await response.json(); } catch (_) {}
+
+      if(!response.ok){
+        throw new Error(result.error || "Não foi possível concluir a operação.");
+      }
+      return result;
     }
-    users = data || [];
-  }else{
-    users = demoAccounts;
+
+    async function loadRealUsers(){
+      const {data, error} = await sb
+        .from("profiles")
+        .select("id,name,cpf,auth_email,role,status")
+        .order("name", {ascending:true});
+
+      if(error){
+        $("usersTableBox").innerHTML =
+          `<div class="empty">Não foi possível carregar os usuários: ${escHtml(error.message)}</div>`;
+        return;
+      }
+
+      const rows = (data || []).map(u => `
+        <tr>
+          <td>${escHtml(u.name)}</td>
+          <td>${escHtml(u.cpf)}</td>
+          <td>${escHtml(u.auth_email || "—")}</td>
+          <td>${u.role === "admin" ? "Administrador" : "Agente de Campo"}</td>
+          <td class="status ${u.status === "ativo" ? "ativo" : "bloqueado"}">
+            ${u.status === "ativo" ? "Ativo" : "Bloqueado"}
+          </td>
+          <td class="actions-cell">
+            <button class="secondary user-edit" data-id="${u.id}">Editar</button>
+            <button class="danger user-delete" data-id="${u.id}">Excluir</button>
+          </td>
+        </tr>
+      `).join("");
+
+      $("usersTableBox").innerHTML = `
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Nome</th>
+              <th>CPF</th>
+              <th>E-mail</th>
+              <th>Perfil</th>
+              <th>Status</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>${rows || `<tr><td colspan="6">Nenhum usuário cadastrado.</td></tr>`}</tbody>
+        </table>
+      `;
+
+      document.querySelectorAll(".user-edit").forEach(btn => btn.onclick = async () => {
+        const user = (data || []).find(u => u.id === btn.dataset.id);
+        if(!user) return;
+
+        $("editingUserId").value = user.id;
+        $("newUserName").value = user.name || "";
+        $("newUserCpf").value = onlyDigits(user.cpf || "").replace(
+          /(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"
+        );
+        $("newUserEmail").value = user.auth_email || "";
+        $("newUserPassword").value = "";
+        $("newUserPassword").required = false;
+        $("newUserPassword").placeholder = "Deixe vazio para manter";
+        $("newUserRole").value = user.role || "operator";
+        $("userSubmit").textContent = "Salvar alterações";
+        $("userCancelEdit").classList.remove("hidden");
+        window.scrollTo({top:$("usersPanel").offsetTop-10,behavior:"smooth"});
+      });
+
+      document.querySelectorAll(".user-delete").forEach(btn => btn.onclick = async () => {
+        const user = (data || []).find(u => u.id === btn.dataset.id);
+        if(!user) return;
+
+        if(!confirm(`Excluir o usuário ${user.name}?\n\nEssa ação não poderá ser desfeita.`)) return;
+
+        try{
+          await callAdminUsers("delete", {user_id:user.id});
+          showMsg($("userMsg"), "Usuário excluído com sucesso.");
+          await loadRealUsers();
+        }catch(err){
+          showMsg($("userMsg"), err.message || "Não foi possível excluir o usuário.");
+        }
+      });
+    }
+
+    $("userForm").addEventListener("submit", async e => {
+      e.preventDefault();
+      hideMsg($("userMsg"));
+
+      const editingId = $("editingUserId").value;
+      const name = $("newUserName").value.trim();
+      const cpf = onlyDigits($("newUserCpf").value);
+      const email = $("newUserEmail").value.trim();
+      const password = $("newUserPassword").value;
+      const role = $("newUserRole").value;
+
+      if(!name){
+        showMsg($("userMsg"), "Informe o nome.");
+        return;
+      }
+      if(!cpfValid(cpf)){
+        showMsg($("userMsg"), "Informe um CPF válido.");
+        return;
+      }
+      if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+        showMsg($("userMsg"), "Informe um e-mail válido.");
+        return;
+      }
+      if(!editingId && !/^\d{6}$/.test(password)){
+        showMsg($("userMsg"), "A senha deve possuir exatamente 6 dígitos.");
+        return;
+      }
+      if(editingId && password && !/^\d{6}$/.test(password)){
+        showMsg($("userMsg"), "Se alterar a senha, ela deve possuir exatamente 6 dígitos.");
+        return;
+      }
+
+      try{
+        $("userSubmit").disabled = true;
+
+        if(editingId){
+          const payload = {
+            user_id: editingId,
+            name,
+            cpf,
+            email,
+            role,
+            status: "ativo"
+          };
+          if(password) payload.password = password;
+
+          await callAdminUsers("update", payload);
+          showMsg($("userMsg"), "Usuário atualizado com sucesso.");
+        }else{
+          await callAdminUsers("create", {
+            name,
+            cpf,
+            email,
+            password,
+            role
+          });
+          showMsg($("userMsg"), "Usuário cadastrado com sucesso.");
+        }
+
+        $("userForm").reset();
+        $("editingUserId").value = "";
+        $("newUserPassword").required = true;
+        $("newUserPassword").placeholder = "6 dígitos";
+        $("userSubmit").textContent = "Cadastrar usuário";
+        $("userCancelEdit").classList.add("hidden");
+        await loadRealUsers();
+
+      }catch(err){
+        console.error("ARI-CPA7 admin-users:", err);
+        showMsg($("userMsg"), err.message || "Não foi possível concluir o cadastro.");
+      }finally{
+        $("userSubmit").disabled = false;
+      }
+    });
+
+    $("userCancelEdit").onclick = () => {
+      $("userForm").reset();
+      $("editingUserId").value = "";
+      $("newUserPassword").required = true;
+      $("newUserPassword").placeholder = "6 dígitos";
+      $("userSubmit").textContent = "Cadastrar usuário";
+      $("userCancelEdit").classList.add("hidden");
+      hideMsg($("userMsg"));
+    };
+
+    await loadRealUsers();
+    return;
   }
 
-  const rows = users.map(u=>`<tr>
+  // Modo de demonstração mantido para funcionamento offline.
+  const rows=demoAccounts.map(u=>`<tr>
     <td>${escHtml(u.name)}</td>
     <td>${escHtml(u.cpf)}</td>
+    <td>—</td>
     <td>${u.role==='admin'?'Administrador':'Agente de Campo'}</td>
-    <td class="status ${u.status==='ativo'?'ativo':'bloqueado'}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
+    <td class="status ${u.status}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
     <td class="actions-cell">
-      <button class="secondary user-edit" data-id="${escHtml(u.id)}">Editar</button>
-      ${!sb ? `<button class="danger user-delete" data-id="${escHtml(u.id)}">Excluir</button>` : ""}
+      <button class="secondary user-edit" data-id="${u.id}">Editar</button>
+      <button class="danger user-delete" data-id="${u.id}">Excluir</button>
     </td>
-  </tr>`).join("");
+  </tr>`).join('');
 
   $("usersContent").innerHTML = `
     <form id="userForm" class="grid admin-user-form">
       <input type="hidden" id="editingUserId" value="">
       <div><label>Nome completo</label><input id="newUserName" required></div>
       <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
-      <div>
-        <label>Senha</label>
-        <input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" placeholder="6 dígitos">
-        <small class="muted">Na edição de usuário real, a senha não é alterada por esta tela.</small>
-      </div>
+      <div><label>E-mail</label><input id="newUserEmail" type="email" required placeholder="usuario@exemplo.com"></div>
+      <div><label>Senha</label><input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" required placeholder="6 dígitos"></div>
       <div><label>Perfil</label><select id="newUserRole"><option value="operator">Agente de Campo</option><option value="admin">Administrador</option></select></div>
-      <div class="actions full">
-        <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
-        <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
-      </div>
+      <div class="actions full"><button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button></div>
     </form>
-    <p id="userMsg" class="msg hidden"></p>
     <h3>Usuários cadastrados</h3>
-    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
-
-  const cpfInput=$("newUserCpf");
-  cpfInput.addEventListener('input',e=>{
-    let v=onlyDigits(e.target.value).slice(0,11);
-    e.target.value=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
-  });
-  $("newUserPassword").addEventListener('input',e=>{
-    e.target.value=onlyDigits(e.target.value).slice(0,6);
-  });
-
-  $("userForm").addEventListener('submit',async e=>{
-    e.preventDefault();
-
-    if(!isAdminUser()){
-      showMsg($("userMsg"),"Somente um administrador ativo pode cadastrar e editar usuários.");
-      return;
-    }
-
-    const editingId=$("editingUserId").value;
-    const name=$("newUserName").value.trim();
-    const cpf=onlyDigits(cpfInput.value);
-    const password=$("newUserPassword").value;
-    const role=$("newUserRole").value;
-
-    if(!name){showMsg($("userMsg"),'Informe o nome.');return;}
-    if(!cpfValid(cpf)){showMsg($("userMsg"),'Informe um CPF válido.');return;}
-
-    if(sb){
-      /* Edição de usuário real: atualiza o perfil no PostgreSQL.
-         A senha do Auth não pode ser alterada por outro usuário usando a
-         chave publishable; ela continuará sendo administrada pelo fluxo
-         de recuperação de senha. */
-      if(!editingId){
-        showMsg($("userMsg"),
-          "O cadastro de um novo usuário real precisa criar também o usuário no Supabase Auth. Vamos habilitar essa etapa pelo backend seguro na próxima fase.");
-        return;
-      }
-
-      const duplicate = users.some(u=>u.cpf===cpf && u.id!==editingId);
-      if(duplicate){
-        showMsg($("userMsg"),'Este CPF já está cadastrado.');
-        return;
-      }
-
-      const {data,error}=await sb
-        .from("profiles")
-        .update({
-          name:name,
-          cpf:cpf,
-          role:role,
-          updated_at:new Date().toISOString()
-        })
-        .eq("id",editingId)
-        .select("id,name,cpf,role,status")
-        .single();
-
-      if(error){
-        console.error("ARI-CPA7: erro ao editar usuário",error);
-        showMsg($("userMsg"),`Não foi possível salvar as alterações: ${error.message || "verifique a autorização no banco."}`);
-        return;
-      }
-
-      demoHistory.push({
-        date:new Date().toLocaleString('pt-BR'),
-        user:currentProfile.cpf,
-        action:'Edição de usuário',
-        detail:`${data.name} / ${data.cpf} / ${data.role==='admin'?'Administrador':'Agente de Campo'}`
-      });
-
-      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
-      await renderDemoUsers();
-      return;
-    }
-
-    /* Modo demonstração */
-    if(password.length!==6){
-      showMsg($("userMsg"),'A senha deve possuir exatamente 6 dígitos.');
-      return;
-    }
-
-    const duplicate=demoAccounts.some(u=>u.cpf===cpf && u.id!==editingId);
-    if(duplicate){
-      showMsg($("userMsg"),'Este CPF já está cadastrado.');
-      return;
-    }
-
-    if(editingId){
-      const account=demoAccounts.find(u=>u.id===editingId);
-      if(!account){showMsg($("userMsg"),'Usuário não encontrado.');return;}
-      account.name=name;
-      account.cpf=cpf;
-      account.password=password;
-      account.role=role;
-      demoHistory.push({
-        date:new Date().toLocaleString('pt-BR'),
-        user:currentProfile.cpf,
-        action:'Edição de usuário',
-        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
-      });
-      await renderDemoUsers();
-      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
-    }else{
-      const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo'};
-      demoAccounts.push(account);
-      demoUsers.push({
-        id:account.id,
-        name,
-        cpf,
-        role:role==='admin'?'Administrador':'Agente de Campo',
-        status:'Ativo'
-      });
-      demoHistory.push({
-        date:new Date().toLocaleString('pt-BR'),
-        user:currentProfile.cpf,
-        action:'Cadastro de usuário',
-        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
-      });
-      await renderDemoUsers();
-      showMsg($("userMsg"),'Usuário cadastrado com sucesso.');
-    }
-  });
-
-  $("userCancelEdit").onclick=()=>renderDemoUsers();
-
-  document.querySelectorAll('.user-edit').forEach(btn=>btn.onclick=async()=>{
-    let account;
-
-    if(sb){
-      const {data,error}=await sb
-        .from("profiles")
-        .select("id,name,cpf,role,status")
-        .eq("id",btn.dataset.id)
-        .single();
-
-      if(error || !data){
-        showMsg($("userMsg"),"Usuário não encontrado.");
-        return;
-      }
-      account=data;
-    }else{
-      account=demoAccounts.find(u=>u.id===btn.dataset.id);
-      if(!account)return;
-    }
-
-    $("editingUserId").value=account.id;
-    $("newUserName").value=account.name || "";
-    $("newUserCpf").value=onlyDigits(account.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
-    $("newUserPassword").value=sb ? "" : (account.password || "");
-    $("newUserRole").value=account.role || "operator";
-    $("userSubmit").textContent='Salvar alterações';
-    $("userCancelEdit").classList.remove('hidden');
-    window.scrollTo({top:$('usersPanel').offsetTop-10,behavior:'smooth'});
-  });
-
-  document.querySelectorAll('.user-delete').forEach(btn=>btn.onclick=()=>{
-    if(!isAdminUser())return;
-    const account=demoAccounts.find(u=>u.id===btn.dataset.id);
-    if(!account)return;
-    if(!confirm(`Excluir o usuário ${account.name}?\n\nEssa ação não poderá ser desfeita.`))return;
-
-    const idx=demoAccounts.findIndex(u=>u.id===account.id);
-    if(idx>=0)demoAccounts.splice(idx,1);
-
-    const idx2=demoUsers.findIndex(u=>u.id===account.id);
-    if(idx2>=0)demoUsers.splice(idx2,1);
-
-    demoHistory.push({
-      date:new Date().toLocaleString('pt-BR'),
-      user:currentProfile.cpf,
-      action:'Exclusão de usuário',
-      detail:`${account.name} / ${account.cpf}`
-    });
-
-    renderDemoUsers();
-    showMsg($("userMsg"),'Usuário excluído com sucesso.');
-  });
+    <div class="table-scroll"><table class="admin-table">
+      <thead><tr><th>Nome</th><th>CPF</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
 }
 async function renderAllActivities(){
   const q=($("activitySearch")?.value||"").toLowerCase().trim();
@@ -830,140 +826,19 @@ function renderHistory(){
     demoHistory.map(h=>`<tr><td>${h.date}</td><td>${h.user}</td><td>${h.action}</td><td>${h.detail}</td></tr>`).join("")
   }</tbody></table>`;
 }
-async function generateDemoReport(){
-  const start=$("reportStart").value;
-  const end=$("reportEnd").value;
-  const result=$("reportResult");
-  result.innerHTML='<div class="item">Consultando os relatórios no banco de dados...</div>';
-
-  let rows=[];
-
-  if(sb){
-    let query=sb.from("activities")
-      .select("*, profiles(name, cpf)")
-      .order("saida_data",{ascending:true})
-      .order("saida_hora",{ascending:true});
-    if(start) query=query.gte("saida_data",start);
-    if(end) query=query.lte("saida_data",end);
-
-    const {data,error}=await query;
-    if(error){
-      console.error("ARI-CPA7: erro ao gerar relatório",error);
-      result.innerHTML=`<div class="item"><strong>Erro ao gerar relatório</strong><p>${escHtml(error.message||"Não foi possível consultar os relatórios no banco.")}</p></div>`;
-      $("printReport").disabled=true;
-      return;
-    }
-    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.name||"—",ownerCpf:a.profiles?.cpf||"—"}));
-  }else{
-    rows=[...window.ariDemoActivities].filter(a=>{
-      const d=a.data||"";
-      return (!start||d>=start)&&(!end||d<=end);
-    }).map(a=>({...a,ownerName:a.ownerName||a.owner||"—",ownerCpf:a.ownerCpf||"—",saida_data:a.data,saida_hora:a.hora,saida_local:a.saidaLocal,km_inicial:a.kmInicial,km_final:a.kmFinal,retorno_local:a.retornoLocal}));
-  }
-
-  const kmOf=a=>{
-    const ini=Number(a.km_inicial??a.kmInicial);
-    const fim=Number(a.km_final??a.kmFinal);
-    return Number.isFinite(ini)&&Number.isFinite(fim)&&fim>=ini?fim-ini:0;
-  };
-  const totalKm=rows.reduce((sum,a)=>sum+kmOf(a),0);
-  const cities=new Set();
-  rows.forEach(a=>{
-    const o=a.saida_local||a.saidaLocal;
-    const d=a.destino;
-    if(o) cities.add(String(o).trim());
-    if(d) cities.add(String(d).trim());
-  });
-
-  const chiefGroups={};
-  rows.forEach(a=>{
-    const key=a.ownerCpf||a.ownerName||"—";
-    if(!chiefGroups[key]) chiefGroups[key]={name:a.ownerName||"—",cpf:a.ownerCpf||"—",count:0,km:0,cities:new Set()};
-    chiefGroups[key].count++;
-    chiefGroups[key].km+=kmOf(a);
-    const o=a.saida_local||a.saidaLocal;
-    const d=a.destino;
-    if(o) chiefGroups[key].cities.add(String(o).trim());
-    if(d) chiefGroups[key].cities.add(String(d).trim());
-  });
-  const chiefList=Object.values(chiefGroups).sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));
-
-  const fmtDate=d=>d?String(d).split('-').reverse().join('/'):'—';
-  const esc=v=>escHtml(String(v??'—'));
-
-  const chiefHtml=chiefList.map(g=>`
-    <div style="border:1px solid #d7dee8;border-radius:12px;padding:12px 14px;margin:0 0 10px;background:#fff;break-inside:avoid;">
-      <div style="font-weight:700;font-size:15px;">${esc(g.name)}</div>
-      <div style="font-size:11px;color:#667085;margin-top:2px;">CPF: ${esc(g.cpf)}</div>
-      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:9px;font-size:12px;">
-        <span><strong>${g.count}</strong> ações</span>
-        <span><strong>${g.km}</strong> km</span>
-        <span><strong>${g.cities.size}</strong> cidades</span>
-      </div>
-    </div>`).join('');
-
-  const actionsHtml=rows.map((a,i)=>{
-    const ini=a.km_inicial??a.kmInicial??'—';
-    const fim=a.km_final??a.kmFinal??'—';
-    const km=kmOf(a);
-    const date=fmtDate(a.saida_data||a.data);
-    const hour=a.saida_hora||a.hora||'—';
-    const origem=a.saida_local||a.saidaLocal||'—';
-    const retorno=a.retorno_local||a.retornoLocal||'—';
-    return `
-      <div style="border:1px solid #cfd7e3;border-radius:12px;padding:15px;margin:0 0 14px;background:#fff;break-inside:avoid;">
-        <div style="font-size:15px;font-weight:800;margin-bottom:9px;">AÇÃO ${String(i+1).padStart(2,'0')} — ${esc(date)} às ${esc(hour)}</div>
-        <div style="font-size:12px;line-height:1.7;">
-          <div><strong>Chefe de Equipe:</strong> ${esc(a.ownerName||'—')}</div>
-          <div><strong>Origem:</strong> ${esc(origem)} &nbsp;&nbsp; <strong>Destino:</strong> ${esc(a.destino||'—')}</div>
-          <div><strong>Viatura:</strong> ${esc(a.viatura||'—')} &nbsp;&nbsp; <strong>KM:</strong> ${esc(ini)} → ${esc(fim)} &nbsp;&nbsp; <strong>Percorridos:</strong> ${km} km</div>
-          <div><strong>Retorno:</strong> ${esc(retorno)}</div>
-        </div>
-        <div style="margin-top:11px;padding-top:10px;border-top:1px solid #e5e7eb;">
-          <div style="font-size:11px;font-weight:800;text-transform:uppercase;margin-bottom:4px;">Descrição da ação</div>
-          <div style="font-size:12px;line-height:1.55;white-space:pre-wrap;">${esc(a.descricao||'Não informada.')}</div>
-        </div>
-        <div style="margin-top:10px;">
-          <div style="font-size:11px;font-weight:800;text-transform:uppercase;margin-bottom:4px;">Informação obtida</div>
-          <div style="font-size:12px;line-height:1.55;white-space:pre-wrap;">${esc(a.informacao||a.informacao_obtida||'Não informada.')}</div>
-        </div>
-      </div>`;
-  }).join('');
-
-  const period=`${fmtDate(start)||'início'} a ${fmtDate(end)||'fim'}`;
-
-  result.innerHTML=`
-    <div id="ariProductionReport" style="background:#fff;color:#172033;padding:4px 2px;font-family:Arial,sans-serif;">
-      <div style="text-align:center;padding:4px 0 14px;border-bottom:2px solid #1d4ed8;">
-        <div style="font-size:18px;font-weight:800;letter-spacing:.2px;">RELATÓRIO DE PRODUÇÃO</div>
-        <div style="font-size:13px;font-weight:700;margin-top:3px;">ARI — CPA-7</div>
-        <div style="font-size:12px;color:#667085;margin-top:6px;">Período: ${esc(period)}</div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0;">
-        <div style="border:1px solid #d7dee8;border-radius:10px;padding:12px;text-align:center;background:#f8fafc;">
-          <div style="font-size:24px;font-weight:800;">${rows.length}</div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#667085;">Ações realizadas</div>
-        </div>
-        <div style="border:1px solid #d7dee8;border-radius:10px;padding:12px;text-align:center;background:#f8fafc;">
-          <div style="font-size:24px;font-weight:800;">${totalKm}</div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#667085;">KM rodados</div>
-        </div>
-        <div style="border:1px solid #d7dee8;border-radius:10px;padding:12px;text-align:center;background:#f8fafc;">
-          <div style="font-size:24px;font-weight:800;">${cities.size}</div><div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#667085;">Cidades visitadas</div>
-        </div>
-      </div>
-
-      ${rows.length?`<>
-        <div style="font-size:14px;font-weight:800;border-bottom:1px solid #d7dee8;padding:9px 0 7px;margin-top:5px;">PRODUÇÃO POR CHEFE DE EQUIPE</div>
-        <div style="padding-top:10px;">${chiefHtml}</div>
-
-        <div style="font-size:14px;font-weight:800;border-bottom:1px solid #d7dee8;padding:9px 0 7px;margin-top:16px;">AÇÕES REALIZADAS</div>
-        <div style="padding-top:12px;">${actionsHtml}</div>
-      </>`:`<div style="padding:18px 4px;color:#667085;">Nenhum lançamento encontrado para o período informado.</div>`}
-    </div>`;
-
+function generateDemoReport(){
+  const start=$("reportStart").value,end=$("reportEnd").value;
+  const list=typeof activities!=="undefined"?activities.filter(a=>{
+    if(!start && !end)return true;
+    return (!start||a.data>=start)&&(!end||a.data<=end);
+  }):[];
+  const totalKm=list.reduce((s,a)=>{
+    const x=Number(a.kmInicial),y=Number(a.kmFinal);
+    return s+(Number.isFinite(x)&&Number.isFinite(y)&&y>=x?y-x:0);
+  },0);
+  $("reportResult").innerHTML=`<div class="item"><strong>Relatório ARI-CPA7</strong><p>Período: ${start||"início"} a ${end||"fim"}</p><p>Registros: <strong>${list.length}</strong></p><p>KM apurados: <strong>${totalKm}</strong></p><p class="ari-muted">Na versão conectada ao banco, este relatório será gerado com todos os registros autorizados.</p></div>`;
   $("printReport").disabled=false;
 }
-
 document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",()=>{
   showAdminPanel(btn.dataset.panel);
   if(btn.dataset.panel==="usersPanel")renderDemoUsers();
@@ -973,5 +848,5 @@ document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click"
 }));
 document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click",hideAdminPanels));
 $("activitySearchBtn").addEventListener("click",renderAllActivities);
-$("generateReport").addEventListener("click",()=>generateDemoReport());
+$("generateReport").addEventListener("click",generateDemoReport);
 $("printReport").addEventListener("click",()=>window.print());
