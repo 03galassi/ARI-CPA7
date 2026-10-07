@@ -57,36 +57,13 @@ async function emailForCpf(cpf){
   }
   return null;
 }
-async function roleForCpf(cpf){
-  const normalized=onlyDigits(cpf);
-  if(normalized === "82011435153") return "admin";
-  if(!sb) return null;
-  try{
-    const {data,error}=await sb.rpc("get_login_role",{p_cpf:normalized});
-    if(error) throw error;
-    if(typeof data === "string") return data.trim();
-    if(Array.isArray(data) && data.length){
-      const value=data[0]?.role || data[0];
-      return typeof value === "string" ? value.trim() : null;
-    }
-  }catch(err){
-    console.error("ARI-CPA7: erro ao identificar perfil",err);
-  }
-  return null;
-}
-
 function showMsg(el,text){el.textContent=text;el.classList.remove("hidden");}
 function hideMsg(el){el.classList.add("hidden");}
-
-// Recuperação de senha disponível para Administradores e Chefes de Equipe.
-const forgotBtn=$("forgotBtn");
-if(forgotBtn) forgotBtn.classList.remove("hidden");
 
 $("cpf").addEventListener("input",e=>{
   let v=onlyDigits(e.target.value).slice(0,11);
   e.target.value=v.replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d{1,2})$/,"$1-$2");
 });
-
 $("password").addEventListener("input",e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
 
 $("loginForm").addEventListener("submit", async e=>{
@@ -199,59 +176,14 @@ async function logout(){
 $("logoutOperator").onclick=logout;$("logoutAdmin").onclick=logout;
 
 async function loadActivities(){
-  if(!sb || !currentProfile) return;
-
-  const {data,error}=await sb.from("activities")
-    .select("*")
-    .eq("owner_id",currentProfile.id)
-    .order("saida_data",{ascending:false})
-    .order("saida_hora",{ascending:false});
-
-  // A interface antiga usava #activityList; a interface atual usa #myActivities.
-  // Aceitamos os dois para evitar que uma versão do HTML quebre o carregamento.
-  const box=$("activityList") || $("myActivities");
-  if(!box){
-    console.warn("ARI-CPA7: nenhum contêiner de atividades encontrado no HTML.");
-    return;
-  }
-
-  if(error){
-    console.error("ARI-CPA7: erro ao carregar atividades",error);
-    box.innerHTML='<div class="empty">Não foi possível carregar suas atividades.</div>';
-    return;
-  }
-
-  const rows=data||[];
-  const fieldCount=$("fieldCount");
-  const fieldKm=$("fieldKm");
-  if(fieldCount) fieldCount.textContent=rows.length;
-  const totalKm=rows.reduce((s,a)=>{
-    const x=Number(a.km_inicial), y=Number(a.km_final);
-    return s+(Number.isFinite(x)&&Number.isFinite(y)&&y>=x?y-x:0);
-  },0);
-  if(fieldKm) fieldKm.textContent=totalKm;
-
-  if(!rows.length){
-    box.innerHTML='<div class="empty">Nenhuma atividade lançada. Toque em “+ Nova atividade” para começar.</div>';
-    return;
-  }
-
-  box.innerHTML=rows.map(a=>{
-    const complete=!!(a.retorno_data&&a.retorno_hora&&a.km_final!==null&&a.km_final!==undefined);
-    return `<div class="item">
-      <div class="item-head">
-        <strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong>
-        <button class="secondary real-edit" data-id="${a.id}">Editar</button>
-      </div>
-      <div>${a.saida_local||"—"} → ${a.destino||"—"}</div>
-      <small>Saída: ${a.saida_hora||"—"} | KM inicial: ${a.km_inicial??"—"}</small>
-      <div class="edit-note ${complete?'complete':'pending'}">${complete?'Retorno registrado':'Aguardando retorno'}</div>
-    </div>`;
-  }).join("");
-
-  box.querySelectorAll(".real-edit").forEach(btn=>{
-    const a=rows.find(x=>String(x.id)===String(btn.dataset.id));
-    if(a) btn.onclick=()=>editActivity(a);
+  const {data,error}=await sb.from("activities").select("*").eq("owner_id", currentProfile.id).order("saida_data",{ascending:false}).order("saida_hora",{ascending:false});
+  const box=$("activityList"); box.innerHTML="";
+  if(error){box.textContent="Não foi possível carregar as atividades.";return}
+  if(!data.length){box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';return}
+  data.forEach(a=>{
+    const el=document.createElement("article");el.className="item";
+    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>Destino: ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
+    el.querySelector("button").onclick=()=>editActivity(a);box.appendChild(el);
   });
 }
 
@@ -318,7 +250,6 @@ $("activityForm").addEventListener("submit",async e=>{
 
   const id = $("activityId").value;
   const payload = {
-    owner_id: currentProfile?.id || null,
     saida_local: $("saidaLocal").value,
     saida_data: $("saidaData").value,
     saida_hora: $("saidaHora").value,
@@ -389,23 +320,10 @@ $("activityForm").addEventListener("submit",async e=>{
   }
 
   let result;
-  if(!currentProfile?.id){
-    showMsg($("activityMsg"),"Usuário não identificado. Faça login novamente.");
-    return;
-  }
-
   if(id){
-    // O Chefe de Equipe só pode editar uma atividade que pertença a ele.
-    result = await sb.from("activities")
-      .update(payload)
-      .eq("id",id)
-      .eq("owner_id",currentProfile.id);
+    result = await sb.from("activities").update(payload).eq("id",id).eq("owner_id", currentProfile.id);
   }else{
-    // Vincula explicitamente a atividade ao perfil/usuário autenticado.
-    result = await sb.from("activities").insert({
-      ...payload,
-      owner_id: currentProfile.id
-    });
+    result = await sb.from("activities").insert({...payload, owner_id: currentProfile.id});
   }
 
   if(result.error){
@@ -554,7 +472,7 @@ const demoUsers = demoAccounts.map(u=>({
   id:u.id,
   name:u.name,
   cpf:u.cpf,
-  role:u.role==='admin'?'Administrador':'Chefe de Equipe',
+  role:u.role==='admin'?'Administrador':'Agente de Campo',
   status:u.status==='ativo'?'Ativo':'Bloqueado'
 }));
 let demoHistory = [
@@ -602,8 +520,7 @@ async function renderDemoUsers(){
   const rows = users.map(u=>`<tr>
     <td>${escHtml(u.name)}</td>
     <td>${escHtml(u.cpf)}</td>
-    <td>${escHtml(u.auth_email || "—")}</td>
-    <td>${u.role==='admin'?'Administrador':'Chefe de Equipe'}</td>
+    <td>${u.role==='admin'?'Administrador':'Agente de Campo'}</td>
     <td class="status ${u.status==='ativo'?'ativo':'bloqueado'}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
     <td class="actions-cell">
       <button class="secondary user-edit" data-id="${escHtml(u.id)}">Editar</button>
@@ -616,13 +533,12 @@ async function renderDemoUsers(){
       <input type="hidden" id="editingUserId" value="">
       <div><label>Nome completo</label><input id="newUserName" required></div>
       <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
-      <div><label>E-mail</label><input id="newUserEmail" type="email" autocomplete="email" required placeholder="usuario@exemplo.com"></div>
       <div>
         <label>Senha</label>
         <input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" placeholder="6 dígitos">
         <small class="muted">Na edição de usuário real, a senha não é alterada por esta tela.</small>
       </div>
-      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Chefe de Equipe</option><option value="admin">Administrador</option></select></div>
+      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Agente de Campo</option><option value="admin">Administrador</option></select></div>
       <div class="actions full">
         <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
         <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
@@ -630,7 +546,7 @@ async function renderDemoUsers(){
     </form>
     <p id="userMsg" class="msg hidden"></p>
     <h3>Usuários cadastrados</h3>
-    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
   const cpfInput=$("newUserCpf");
   cpfInput.addEventListener('input',e=>{
@@ -652,36 +568,55 @@ async function renderDemoUsers(){
     const editingId=$("editingUserId").value;
     const name=$("newUserName").value.trim();
     const cpf=onlyDigits(cpfInput.value);
-    const email=$("newUserEmail").value.trim().toLowerCase();
     const password=$("newUserPassword").value;
     const role=$("newUserRole").value;
 
     if(!name){showMsg($("userMsg"),'Informe o nome.');return;}
     if(!cpfValid(cpf)){showMsg($("userMsg"),'Informe um CPF válido.');return;}
-    if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showMsg($("userMsg"),'Informe um e-mail válido.');return;}
-    if(!editingId && password.length!==6){showMsg($("userMsg"),'A senha inicial deve possuir exatamente 6 dígitos.');return;}
 
     if(sb){
-      const duplicate = users.some(u=>u.cpf===cpf && u.id!==editingId);
-      if(duplicate){showMsg($("userMsg"),'Este CPF já está cadastrado.');return;}
-      const duplicateEmail = users.some(u=>String(u.auth_email||'').toLowerCase()===email && u.id!==editingId);
-      if(duplicateEmail){showMsg($("userMsg"),'Este e-mail já está cadastrado.');return;}
-
-      const action = editingId ? "update" : "create";
-      const body = {action, name, cpf, email, role};
-      if(editingId) body.user_id=editingId;
-      if(password) body.password=password;
-
-      const {data,error}=await sb.functions.invoke("admin-users",{body});
-      if(error){
-        console.error("ARI-CPA7: erro na função admin-users",error,data);
-        const detail=data?.error || data?.message || error.message || "verifique a função admin-users.";
-        showMsg($("userMsg"),`Não foi possível salvar o usuário: ${detail}`);
+      /* Edição de usuário real: atualiza o perfil no PostgreSQL.
+         A senha do Auth não pode ser alterada por outro usuário usando a
+         chave publishable; ela continuará sendo administrada pelo fluxo
+         de recuperação de senha. */
+      if(!editingId){
+        showMsg($("userMsg"),
+          "O cadastro de um novo usuário real precisa criar também o usuário no Supabase Auth. Vamos habilitar essa etapa pelo backend seguro na próxima fase.");
         return;
       }
-      if(data?.error){showMsg($("userMsg"),`Não foi possível salvar o usuário: ${data.error}`);return;}
 
-      showMsg($("userMsg"),editingId?'Usuário atualizado com sucesso.':'Usuário cadastrado com sucesso.');
+      const duplicate = users.some(u=>u.cpf===cpf && u.id!==editingId);
+      if(duplicate){
+        showMsg($("userMsg"),'Este CPF já está cadastrado.');
+        return;
+      }
+
+      const {data,error}=await sb
+        .from("profiles")
+        .update({
+          name:name,
+          cpf:cpf,
+          role:role,
+          updated_at:new Date().toISOString()
+        })
+        .eq("id",editingId)
+        .select("id,name,cpf,role,status")
+        .single();
+
+      if(error){
+        console.error("ARI-CPA7: erro ao editar usuário",error);
+        showMsg($("userMsg"),`Não foi possível salvar as alterações: ${error.message || "verifique a autorização no banco."}`);
+        return;
+      }
+
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Edição de usuário',
+        detail:`${data.name} / ${data.cpf} / ${data.role==='admin'?'Administrador':'Agente de Campo'}`
+      });
+
+      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
       await renderDemoUsers();
       return;
     }
@@ -704,31 +639,30 @@ async function renderDemoUsers(){
       account.name=name;
       account.cpf=cpf;
       account.password=password;
-      account.auth_email=email;
       account.role=role;
       demoHistory.push({
         date:new Date().toLocaleString('pt-BR'),
         user:currentProfile.cpf,
         action:'Edição de usuário',
-        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Chefe de Equipe'}`
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
       });
       await renderDemoUsers();
       showMsg($("userMsg"),'Usuário atualizado com sucesso.');
     }else{
-      const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo',auth_email:email};
+      const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo'};
       demoAccounts.push(account);
       demoUsers.push({
         id:account.id,
         name,
         cpf,
-        role:role==='admin'?'Administrador':'Chefe de Equipe',
+        role:role==='admin'?'Administrador':'Agente de Campo',
         status:'Ativo'
       });
       demoHistory.push({
         date:new Date().toLocaleString('pt-BR'),
         user:currentProfile.cpf,
         action:'Cadastro de usuário',
-        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Chefe de Equipe'}`
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
       });
       await renderDemoUsers();
       showMsg($("userMsg"),'Usuário cadastrado com sucesso.');
@@ -743,7 +677,7 @@ async function renderDemoUsers(){
     if(sb){
       const {data,error}=await sb
         .from("profiles")
-        .select("id,name,cpf,role,status,auth_email")
+        .select("id,name,cpf,role,status")
         .eq("id",btn.dataset.id)
         .single();
 
@@ -760,7 +694,6 @@ async function renderDemoUsers(){
     $("editingUserId").value=account.id;
     $("newUserName").value=account.name || "";
     $("newUserCpf").value=onlyDigits(account.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
-    $("newUserEmail").value=account.auth_email || "";
     $("newUserPassword").value=sb ? "" : (account.password || "");
     $("newUserRole").value=account.role || "operator";
     $("userSubmit").textContent='Salvar alterações';
@@ -870,95 +803,143 @@ function renderHistory(){
     demoHistory.map(h=>`<tr><td>${h.date}</td><td>${h.user}</td><td>${h.action}</td><td>${h.detail}</td></tr>`).join("")
   }</tbody></table>`;
 }
-async function renderMonthlyReport(){
+async function generateDemoReport(){
   const box=$("reportResult");
   if(!box) return;
-  box.innerHTML='<div class="empty">Carregando relatório mensal...</div>';
+  box.innerHTML='<div class="item"><strong>Carregando relatório...</strong></div>';
 
   let rows=[];
   if(sb){
-    const {data,error}=await sb
-      .from("activities")
-      .select("id,owner_id,saida_data,saida_hora,viatura,km_inicial,km_final,profiles(name,cpf)")
-      .order("saida_data",{ascending:false})
-      .order("saida_hora",{ascending:false});
+    const {data,error}=await sb.from("activities")
+      .select("*, profiles(name, cpf)")
+      .order("saida_data",{ascending:true})
+      .order("saida_hora",{ascending:true});
     if(error){
-      console.error("ARI-CPA7: erro no relatório mensal",error);
-      box.innerHTML=`<div class="empty">Não foi possível carregar o relatório mensal.<br><small>${escHtml(error.message||"Erro de autorização")}</small></div>`;
+      console.error("ARI-CPA7: erro ao carregar relatório",error);
+      box.innerHTML='<div class="item"><strong>Não foi possível carregar o relatório.</strong><p>'+escHtml(error.message||"Verifique a conexão com o Supabase.")+'</p></div>';
       return;
     }
     rows=(data||[]).map(a=>({
       ...a,
-      ownerName:a.profiles?.name||a.owner_id||"—",
-      ownerCpf:a.profiles?.cpf||"—"
+      ownerName:a.profiles?.name||"—",
+      ownerCpf:a.profiles?.cpf||"—",
+      data:a.saida_data,
+      hora:a.saida_hora,
+      saidaLocal:a.saida_local,
+      kmInicial:a.km_inicial,
+      kmFinal:a.km_final,
+      retornoLocal:a.retorno_local,
+      retornoData:a.retorno_data,
+      retornoHora:a.retorno_hora
     }));
   }else{
-    rows=[...window.ariDemoActivities].map(a=>({
-      ...a,ownerName:a.ownerName||a.owner||"—",ownerCpf:a.ownerCpf||a.owner||"—",
-      saida_data:a.data,saida_hora:a.hora,km_inicial:a.kmInicial,km_final:a.kmFinal
-    }));
+    rows=[...window.ariDemoActivities].map(a=>({...a,ownerName:a.ownerName||a.owner||"—",ownerCpf:a.ownerCpf||"—"}));
   }
 
   if(!rows.length){
-    box.innerHTML='<div class="empty">Nenhum lançamento registrado.</div>';
+    box.innerHTML='<div class="item"><strong>RELATÓRIO DE PRODUÇÃO — ARI-CPA7</strong><p>Nenhuma atividade lançada pela equipe de campo.</p></div>';
+    if($("printReport")) $("printReport").disabled=true;
     return;
   }
 
-  const months={};
-  for(const a of rows){
-    const month=String(a.saida_data||"").slice(0,7)||"Sem data";
-    if(!months[month]) months[month]={actions:0,km:0,chiefs:{}};
-    const m=months[month];
-    const owner=a.owner_id||a.ownerCpf||a.ownerName||"sem-identificação";
-    if(!m.chiefs[owner]) m.chiefs[owner]={name:a.ownerName||"—",cpf:a.ownerCpf||"—",actions:0,km:0};
-    const c=m.chiefs[owner];
-    const kmI=Number(a.km_inicial), kmF=Number(a.km_final);
-    const km=Number.isFinite(kmI)&&Number.isFinite(kmF)&&kmF>=kmI ? kmF-kmI : 0;
-    m.actions++; m.km+=km; c.actions++; c.km+=km;
-  }
-
-  const monthKeys=Object.keys(months).sort().reverse();
-  const monthName=k=>{
-    if(!/^\d{4}-\d{2}$/.test(k)) return k;
-    const [y,m]=k.split("-").map(Number);
-    return new Date(y,m-1,1).toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+  const monthName=(key)=>{
+    const [y,m]=key.split('-').map(Number);
+    return new Date(y,m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'}).replace(/^./,c=>c.toUpperCase());
   };
+  const dateLabel=(v)=>v?new Date(String(v)+'T00:00:00').toLocaleDateString('pt-BR'):"—";
+  const kmDistance=(a)=>{
+    const x=Number(a.kmInicial),y=Number(a.kmFinal);
+    return Number.isFinite(x)&&Number.isFinite(y)&&y>=x ? y-x : 0;
+  };
+  const citiesOf=(a)=>[a.saidaLocal,a.destino,a.retornoLocal].filter(Boolean).map(x=>String(x).trim()).filter(Boolean);
+  const esc=(v)=>escHtml(v==null||v===''?'—':v);
 
-  box.innerHTML=monthKeys.map(k=>{
-    const m=months[k];
-    const chiefs=Object.values(m.chiefs).sort((a,b)=>b.actions-a.actions||b.km-a.km||a.name.localeCompare(b.name));
-    return `<section class="item monthly-report-block">
-      <div class="item-head"><strong style="text-transform:capitalize">${escHtml(monthName(k))}</strong><strong>${m.actions} ações | ${m.km} KM</strong></div>
-      <div class="table-scroll"><table class="admin-table"><thead><tr><th>Chefe de Equipe</th><th>CPF</th><th>Ações</th><th>KM</th></tr></thead><tbody>
-      ${chiefs.map(c=>`<tr><td>${escHtml(c.name)}</td><td>${escHtml(c.cpf)}</td><td>${c.actions}</td><td>${c.km}</td></tr>`).join("")}
-      </tbody></table></div>
-    </section>`;
-  }).join("");
+  // Agrupamento: mês -> chefe de equipe.
+  const groups={};
+  rows.forEach(a=>{
+    const key=(a.data||'0000-00-00').slice(0,7);
+    const chief=a.ownerName||'—';
+    groups[key]??={};
+    groups[key][chief]??=[];
+    groups[key][chief].push(a);
+  });
 
-  const printBtn=$("printReport");
-  if(printBtn) printBtn.disabled=false;
+  let totalActions=rows.length;
+  let totalKm=rows.reduce((s,a)=>s+kmDistance(a),0);
+  const allCities=new Set(rows.flatMap(citiesOf));
+
+  let html=`<div class="item production-report" style="padding:18px;">
+    <div style="text-align:center;margin-bottom:18px;">
+      <h2 style="margin:0 0 5px;">RELATÓRIO DE PRODUÇÃO — ARI-CPA7</h2>
+      <div class="muted">Consolidado das atividades lançadas pela equipe de campo</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:20px;">
+      <div style="border:1px solid #ddd;border-radius:10px;padding:12px;text-align:center;"><strong style="font-size:24px;">${totalActions}</strong><br><small>AÇÕES</small></div>
+      <div style="border:1px solid #ddd;border-radius:10px;padding:12px;text-align:center;"><strong style="font-size:24px;">${totalKm.toLocaleString('pt-BR')}</strong><br><small>KM APURADOS</small></div>
+      <div style="border:1px solid #ddd;border-radius:10px;padding:12px;text-align:center;"><strong style="font-size:24px;">${allCities.size}</strong><br><small>CIDADES VISITADAS</small></div>
+    </div>`;
+
+  Object.keys(groups).sort().reverse().forEach(month=>{
+    const monthRows=Object.values(groups[month]).flat();
+    const monthKm=monthRows.reduce((s,a)=>s+kmDistance(a),0);
+    const monthCities=new Set(monthRows.flatMap(citiesOf));
+    html+=`<section style="margin-top:24px;break-inside:avoid;">
+      <h3 style="border-bottom:2px solid #1f4fd6;padding-bottom:7px;margin-bottom:12px;">${esc(monthName(month))}</h3>
+      <div style="margin-bottom:14px;"><strong>${monthRows.length}</strong> ações &nbsp;|&nbsp; <strong>${monthKm.toLocaleString('pt-BR')}</strong> km &nbsp;|&nbsp; <strong>${monthCities.size}</strong> cidades</div>`;
+
+    Object.keys(groups[month]).sort((a,b)=>a.localeCompare(b,'pt-BR')).forEach(chief=>{
+      const list=groups[month][chief];
+      const chiefKm=list.reduce((s,a)=>s+kmDistance(a),0);
+      const chiefCities=new Set(list.flatMap(citiesOf));
+      html+=`<div style="margin:16px 0 18px;border:1px solid #d9d9d9;border-radius:10px;padding:14px;break-inside:avoid;">
+        <h4 style="margin:0 0 8px;">${esc(chief)}</h4>
+        <div class="muted" style="margin-bottom:12px;"><strong>${list.length}</strong> ações &nbsp;|&nbsp; <strong>${chiefKm.toLocaleString('pt-BR')}</strong> km &nbsp;|&nbsp; <strong>${chiefCities.size}</strong> cidades</div>`;
+
+      list.forEach((a,i)=>{
+        const completeKm=kmDistance(a);
+        html+=`<article style="border-top:1px solid #e5e5e5;padding:12px 0;break-inside:avoid;">
+          <div style="font-weight:700;margin-bottom:7px;">AÇÃO ${i+1} — ${esc(dateLabel(a.data))} ${esc(a.hora||'')}</div>
+          <div><strong>Origem:</strong> ${esc(a.saidaLocal)} &nbsp;&nbsp; <strong>Destino:</strong> ${esc(a.destino)}</div>
+          <div><strong>Viatura:</strong> ${esc(a.viatura)} &nbsp;&nbsp; <strong>KM:</strong> ${esc(a.kmInicial)} → ${esc(a.kmFinal)} &nbsp;&nbsp; <strong>Percorridos:</strong> ${completeKm.toLocaleString('pt-BR')}</div>
+          <div><strong>Retorno:</strong> ${esc(a.retornoLocal)} ${a.retornoData?`— ${esc(dateLabel(a.retornoData))} ${esc(a.retornoHora||'')}`:''}</div>
+          <div style="margin-top:7px;"><strong>Descrição da atividade:</strong><br>${esc(a.descricao)}</div>
+          <div style="margin-top:7px;"><strong>Informação obtida:</strong><br>${esc(a.informacao)}</div>
+        </article>`;
+      });
+      html+='</div>';
+    });
+    html+='</section>';
+  });
+
+  html+='</div>';
+  box.innerHTML=html;
+  if($("printReport")) $("printReport").disabled=false;
 }
 
-async function printMonthlyReport(){
-  await renderMonthlyReport();
-  window.print();
-}
-
-function generateDemoReport(){ return renderMonthlyReport(); }
-
-function bindOptional(id,event,handler){
-  const el=$(id); if(el) el.addEventListener(event,handler);
-}
-
-document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",async()=>{
+document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",()=>{
   showAdminPanel(btn.dataset.panel);
-  if(btn.dataset.panel==="usersPanel") await renderDemoUsers();
-  if(btn.dataset.panel==="activitiesPanel") await renderAllActivities();
-  if(btn.dataset.panel==="historyPanel") renderHistory();
-  if(btn.dataset.panel==="vehiclesPanel") renderDemoVehicles();
-  if(btn.dataset.panel==="reportsPanel") await renderMonthlyReport();
+  if(btn.dataset.panel==="usersPanel")renderDemoUsers();
+  if(btn.dataset.panel==="activitiesPanel")renderAllActivities();
+  if(btn.dataset.panel==="historyPanel")renderHistory();
+  if(btn.dataset.panel==="vehiclesPanel")renderDemoVehicles();
+  if(/report/i.test(btn.dataset.panel||"")) generateDemoReport();
 }));
 document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click",hideAdminPanels));
-bindOptional("activitySearchBtn","click",renderAllActivities);
-bindOptional("generateReport","click",renderMonthlyReport);
-bindOptional("printReport","click",printMonthlyReport);
+$("activitySearchBtn").addEventListener("click",renderAllActivities);
+$("generateReport").addEventListener("click",generateDemoReport);
+$("printReport").addEventListener("click",()=>{
+  const report=$("reportResult");
+  if(!report || !report.innerHTML.trim()) return;
+  const w=window.open("","_blank");
+  if(!w){ alert("Permita a abertura de janela para imprimir o relatório."); return; }
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Relatório de Produção — ARI-CPA7</title><style>
+    *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:24px;color:#111;background:#fff;font-size:12px}
+    h2{font-size:18px;text-align:center;margin:0 0 5px}h3{font-size:15px;margin:22px 0 10px;border-bottom:2px solid #333;padding-bottom:6px}
+    h4{font-size:13px;margin:0 0 7px}.muted{color:#555}.item{padding:0}.production-report{padding:0!important}
+    .production-report>div:first-child{margin-bottom:16px}.production-report article{page-break-inside:avoid}
+    @media print{body{margin:12mm}.production-report section,.production-report article{break-inside:avoid;page-break-inside:avoid}}
+  </style></head><body>${report.innerHTML}</body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(()=>w.print(),300);
+});
