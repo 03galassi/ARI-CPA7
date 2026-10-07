@@ -1,0 +1,9 @@
+ARI-CPA7 - CORREÇÃO 07/10/2026
+
+1) Substitua o app.js atual do GitHub por este app.js.
+2) O erro do console "Cannot set properties of null (setting 'innerHTML')" foi corrigido.
+3) O carregamento das atividades agora funciona com #activityList ou #myActivities.
+4) Depois do upload, faça Ctrl+Shift+R.
+5) Se o index.html carregar app.js com ?v=20261006-1630, altere para ?v=20261007-0845 para forçar o navegador a usar este arquivo.
+
+Não altere as chaves do Supabase.

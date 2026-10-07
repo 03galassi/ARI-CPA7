@@ -176,14 +176,59 @@ async function logout(){
 $("logoutOperator").onclick=logout;$("logoutAdmin").onclick=logout;
 
 async function loadActivities(){
-  const {data,error}=await sb.from("activities").select("*").order("saida_data",{ascending:false}).order("saida_hora",{ascending:false});
-  const box=$("activityList"); box.innerHTML="";
-  if(error){box.textContent="Não foi possível carregar as atividades.";return}
-  if(!data.length){box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';return}
-  data.forEach(a=>{
-    const el=document.createElement("article");el.className="item";
-    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>Destino: ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
-    el.querySelector("button").onclick=()=>editActivity(a);box.appendChild(el);
+  if(!sb || !currentProfile) return;
+
+  const {data,error}=await sb.from("activities")
+    .select("*")
+    .eq("owner_id",currentProfile.id)
+    .order("saida_data",{ascending:false})
+    .order("saida_hora",{ascending:false});
+
+  // A interface antiga usava #activityList; a interface atual usa #myActivities.
+  // Aceitamos os dois para evitar que uma versão do HTML quebre o carregamento.
+  const box=$("activityList") || $("myActivities");
+  if(!box){
+    console.warn("ARI-CPA7: nenhum contêiner de atividades encontrado no HTML.");
+    return;
+  }
+
+  if(error){
+    console.error("ARI-CPA7: erro ao carregar atividades",error);
+    box.innerHTML='<div class="empty">Não foi possível carregar suas atividades.</div>';
+    return;
+  }
+
+  const rows=data||[];
+  const fieldCount=$("fieldCount");
+  const fieldKm=$("fieldKm");
+  if(fieldCount) fieldCount.textContent=rows.length;
+  const totalKm=rows.reduce((s,a)=>{
+    const x=Number(a.km_inicial), y=Number(a.km_final);
+    return s+(Number.isFinite(x)&&Number.isFinite(y)&&y>=x?y-x:0);
+  },0);
+  if(fieldKm) fieldKm.textContent=totalKm;
+
+  if(!rows.length){
+    box.innerHTML='<div class="empty">Nenhuma atividade lançada. Toque em “+ Nova atividade” para começar.</div>';
+    return;
+  }
+
+  box.innerHTML=rows.map(a=>{
+    const complete=!!(a.retorno_data&&a.retorno_hora&&a.km_final!==null&&a.km_final!==undefined);
+    return `<div class="item">
+      <div class="item-head">
+        <strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong>
+        <button class="secondary real-edit" data-id="${a.id}">Editar</button>
+      </div>
+      <div>${a.saida_local||"—"} → ${a.destino||"—"}</div>
+      <small>Saída: ${a.saida_hora||"—"} | KM inicial: ${a.km_inicial??"—"}</small>
+      <div class="edit-note ${complete?'complete':'pending'}">${complete?'Retorno registrado':'Aguardando retorno'}</div>
+    </div>`;
+  }).join("");
+
+  box.querySelectorAll(".real-edit").forEach(btn=>{
+    const a=rows.find(x=>String(x.id)===String(btn.dataset.id));
+    if(a) btn.onclick=()=>editActivity(a);
   });
 }
 
@@ -250,6 +295,7 @@ $("activityForm").addEventListener("submit",async e=>{
 
   const id = $("activityId").value;
   const payload = {
+    owner_id: currentProfile?.id || null,
     saida_local: $("saidaLocal").value,
     saida_data: $("saidaData").value,
     saida_hora: $("saidaHora").value,
@@ -473,14 +519,12 @@ const demoUsers = demoAccounts.map(u=>({
   id:u.id,
   name:u.name,
   cpf:u.cpf,
-  role:u.role==='admin'?'Administrador':'Chefe de Equipe',
+  role:u.role==='admin'?'Administrador':'Agente de Campo',
   status:u.status==='ativo'?'Ativo':'Bloqueado'
 }));
 let demoHistory = [
   {date:new Date().toLocaleString("pt-BR"), user:"82011435153", action:"Login administrativo", detail:"Acesso ao painel"}
 ];
-
-const ADMIN_USERS_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/admin-users`;
 
 function showAdminPanel(id){
   $("adminHome").classList.add("hidden");
@@ -492,86 +536,56 @@ function hideAdminPanels(){
   $("adminHome").classList.remove("hidden");
 }
 
+/* O administrador agora é identificado pelo perfil real do Supabase.
+   A regra antiga que exigia id === "demo-admin" foi removida. */
 function isAdminUser(){
   return !!currentProfile &&
          currentProfile.role === "admin" &&
          currentProfile.status === "ativo";
 }
 
-async function callAdminUsers(action, payload={}){
-  if(!sb) throw new Error("O sistema não está conectado ao Supabase.");
-  if(!isAdminUser()) throw new Error("Somente administradores ativos podem administrar usuários.");
-
-  const {data:{session}, error:sessionError}=await sb.auth.getSession();
-  if(sessionError || !session?.access_token){
-    throw new Error("Sua sessão expirou. Faça login novamente.");
-  }
-
-  const response = await fetch(ADMIN_USERS_FUNCTION_URL, {
-    method:"POST",
-    headers:{
-      "Authorization":`Bearer ${session.access_token}`,
-      "apikey":SUPABASE_ANON_KEY,
-      "Content-Type":"application/json"
-    },
-    body:JSON.stringify({action,...payload})
-  });
-
-  let result={};
-  try{ result=await response.json(); }catch(_){}
-
-  if(!response.ok){
-    throw new Error(result.error || `Erro ${response.status} ao executar a operação.`);
-  }
-
-  return result;
-}
-
 async function renderDemoUsers(){
-  let users=[];
+  let users = [];
 
   if(sb){
-    const {data,error}=await sb
+    const {data,error} = await sb
       .from("profiles")
       .select("id,name,cpf,role,status,auth_email")
       .order("name",{ascending:true});
 
     if(error){
-      console.error("ARI-CPA7: erro ao carregar usuários",error);
+      console.error("ARI-CPA7: erro ao carregar usuários", error);
       $("usersContent").innerHTML =
         '<div class="empty">Não foi possível carregar os usuários do Supabase.</div>';
       return;
     }
-    users=data||[];
+    users = data || [];
   }else{
-    users=demoAccounts;
+    users = demoAccounts;
   }
 
-  const rows=users.map(u=>`<tr>
+  const rows = users.map(u=>`<tr>
     <td>${escHtml(u.name)}</td>
     <td>${escHtml(u.cpf)}</td>
-    <td>${u.role==='admin'?'Administrador':'Chefe de Equipe'}</td>
+    <td>${u.role==='admin'?'Administrador':'Agente de Campo'}</td>
     <td class="status ${u.status==='ativo'?'ativo':'bloqueado'}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
     <td class="actions-cell">
       <button class="secondary user-edit" data-id="${escHtml(u.id)}">Editar</button>
-      <button class="secondary user-toggle" data-id="${escHtml(u.id)}" data-status="${escHtml(u.status)}">${u.status==='ativo'?'Bloquear':'Ativar'}</button>
-      <button class="danger user-delete" data-id="${escHtml(u.id)}">Excluir</button>
+      ${!sb ? `<button class="danger user-delete" data-id="${escHtml(u.id)}">Excluir</button>` : ""}
     </td>
   </tr>`).join("");
 
-  $("usersContent").innerHTML=`
+  $("usersContent").innerHTML = `
     <form id="userForm" class="grid admin-user-form">
       <input type="hidden" id="editingUserId" value="">
       <div><label>Nome completo</label><input id="newUserName" required></div>
       <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
-      <div><label>E-mail</label><input id="newUserEmail" type="email" required placeholder="usuario@exemplo.com"></div>
       <div>
         <label>Senha</label>
         <input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" placeholder="6 dígitos">
-        <small class="muted">Obrigatória no cadastro. Na edição, deixe em branco para manter a senha.</small>
+        <small class="muted">Na edição de usuário real, a senha não é alterada por esta tela.</small>
       </div>
-      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Chefe de Equipe</option><option value="admin">Administrador</option></select></div>
-      <div><label>Status</label><select id="newUserStatus"><option value="ativo">Ativo</option><option value="bloqueado">Bloqueado</option></select></div>
+      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Agente de Campo</option><option value="admin">Administrador</option></select></div>
       <div class="actions full">
         <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
         <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
@@ -579,203 +593,182 @@ async function renderDemoUsers(){
     </form>
     <p id="userMsg" class="msg hidden"></p>
     <h3>Usuários cadastrados</h3>
-    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
   const cpfInput=$("newUserCpf");
-  cpfInput.addEventListener("input",e=>{
+  cpfInput.addEventListener('input',e=>{
     let v=onlyDigits(e.target.value).slice(0,11);
-    e.target.value=v.replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d{1,2})$/,"$1-$2");
+    e.target.value=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
   });
-
-  $("newUserPassword").addEventListener("input",e=>{
+  $("newUserPassword").addEventListener('input',e=>{
     e.target.value=onlyDigits(e.target.value).slice(0,6);
   });
 
-  $("userForm").addEventListener("submit",async e=>{
+  $("userForm").addEventListener('submit',async e=>{
     e.preventDefault();
-    hideMsg($("userMsg"));
 
     if(!isAdminUser()){
-      showMsg($("userMsg"),"Somente administradores ativos podem cadastrar e editar usuários.");
+      showMsg($("userMsg"),"Somente um administrador ativo pode cadastrar e editar usuários.");
       return;
     }
 
     const editingId=$("editingUserId").value;
     const name=$("newUserName").value.trim();
     const cpf=onlyDigits(cpfInput.value);
-    const email=$("newUserEmail").value.trim();
     const password=$("newUserPassword").value;
     const role=$("newUserRole").value;
-    const status=$("newUserStatus").value;
 
-    if(!name){showMsg($("userMsg"),"Informe o nome.");return;}
-    if(!cpfValid(cpf)){showMsg($("userMsg"),"Informe um CPF válido.");return;}
-    if(!email){showMsg($("userMsg"),"Informe o e-mail.");return;}
-    if(!editingId && password.length!==6){
-      showMsg($("userMsg"),"A senha deve possuir exatamente 6 dígitos.");
-      return;
-    }
-    if(editingId && password && password.length!==6){
-      showMsg($("userMsg"),"A nova senha deve possuir exatamente 6 dígitos.");
-      return;
-    }
+    if(!name){showMsg($("userMsg"),'Informe o nome.');return;}
+    if(!cpfValid(cpf)){showMsg($("userMsg"),'Informe um CPF válido.');return;}
 
-    try{
-      if(sb){
-        const result=editingId
-          ? await callAdminUsers("update",{
-              user_id:editingId,
-              name,cpf,email,role,status,
-              ...(password?{password}: {})
-            })
-          : await callAdminUsers("create",{
-              name,cpf,email,password,role
-            });
-
-        demoHistory.push({
-          date:new Date().toLocaleString("pt-BR"),
-          user:currentProfile.cpf,
-          action:editingId?"Edição de usuário":"Cadastro de usuário",
-          detail:`${name} / ${cpf} / ${role==="admin"?"Administrador":"Chefe de Equipe"}`
-        });
-
-        await renderDemoUsers();
-        showMsg($("userMsg"),result.message || (editingId?"Usuário atualizado com sucesso.":"Usuário criado com sucesso."));
+    if(sb){
+      /* Edição de usuário real: atualiza o perfil no PostgreSQL.
+         A senha do Auth não pode ser alterada por outro usuário usando a
+         chave publishable; ela continuará sendo administrada pelo fluxo
+         de recuperação de senha. */
+      if(!editingId){
+        showMsg($("userMsg"),
+          "O cadastro de um novo usuário real precisa criar também o usuário no Supabase Auth. Vamos habilitar essa etapa pelo backend seguro na próxima fase.");
         return;
       }
 
-      /* Modo demonstração */
-      const duplicate=demoAccounts.some(u=>u.cpf===cpf && u.id!==editingId);
-      if(duplicate){showMsg($("userMsg"),"Este CPF já está cadastrado.");return;}
-
-      if(editingId){
-        const account=demoAccounts.find(u=>u.id===editingId);
-        if(!account){showMsg($("userMsg"),"Usuário não encontrado.");return;}
-        account.name=name;
-        account.cpf=cpf;
-        if(password)account.password=password;
-        account.role=role;
-        account.status=status;
-        await renderDemoUsers();
-        showMsg($("userMsg"),"Usuário atualizado com sucesso.");
-      }else{
-        const account={id:"demo-"+crypto.randomUUID(),cpf,password,name,role,status};
-        demoAccounts.push(account);
-        await renderDemoUsers();
-        showMsg($("userMsg"),"Usuário cadastrado com sucesso.");
+      const duplicate = users.some(u=>u.cpf===cpf && u.id!==editingId);
+      if(duplicate){
+        showMsg($("userMsg"),'Este CPF já está cadastrado.');
+        return;
       }
-    }catch(error){
-      console.error("ARI-CPA7 admin-users:",error);
-      showMsg($("userMsg"),error.message || "Não foi possível concluir a operação.");
+
+      const {data,error}=await sb
+        .from("profiles")
+        .update({
+          name:name,
+          cpf:cpf,
+          role:role,
+          updated_at:new Date().toISOString()
+        })
+        .eq("id",editingId)
+        .select("id,name,cpf,role,status")
+        .single();
+
+      if(error){
+        console.error("ARI-CPA7: erro ao editar usuário",error);
+        showMsg($("userMsg"),`Não foi possível salvar as alterações: ${error.message || "verifique a autorização no banco."}`);
+        return;
+      }
+
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Edição de usuário',
+        detail:`${data.name} / ${data.cpf} / ${data.role==='admin'?'Administrador':'Agente de Campo'}`
+      });
+
+      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
+      await renderDemoUsers();
+      return;
+    }
+
+    /* Modo demonstração */
+    if(password.length!==6){
+      showMsg($("userMsg"),'A senha deve possuir exatamente 6 dígitos.');
+      return;
+    }
+
+    const duplicate=demoAccounts.some(u=>u.cpf===cpf && u.id!==editingId);
+    if(duplicate){
+      showMsg($("userMsg"),'Este CPF já está cadastrado.');
+      return;
+    }
+
+    if(editingId){
+      const account=demoAccounts.find(u=>u.id===editingId);
+      if(!account){showMsg($("userMsg"),'Usuário não encontrado.');return;}
+      account.name=name;
+      account.cpf=cpf;
+      account.password=password;
+      account.role=role;
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Edição de usuário',
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
+      });
+      await renderDemoUsers();
+      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
+    }else{
+      const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo'};
+      demoAccounts.push(account);
+      demoUsers.push({
+        id:account.id,
+        name,
+        cpf,
+        role:role==='admin'?'Administrador':'Agente de Campo',
+        status:'Ativo'
+      });
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Cadastro de usuário',
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Agente de Campo'}`
+      });
+      await renderDemoUsers();
+      showMsg($("userMsg"),'Usuário cadastrado com sucesso.');
     }
   });
 
   $("userCancelEdit").onclick=()=>renderDemoUsers();
 
-  document.querySelectorAll(".user-edit").forEach(btn=>btn.onclick=async()=>{
-    try{
-      let account;
-
-      if(sb){
-        const {data,error}=await sb
-          .from("profiles")
-          .select("id,name,cpf,role,status,auth_email")
-          .eq("id",btn.dataset.id)
-          .single();
-
-        if(error || !data)throw new Error("Usuário não encontrado.");
-        account=data;
-      }else{
-        account=demoAccounts.find(u=>u.id===btn.dataset.id);
-        if(!account)return;
-      }
-
-      $("editingUserId").value=account.id;
-      $("newUserName").value=account.name||"";
-      $("newUserCpf").value=onlyDigits(account.cpf||"").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,"$1.$2.$3-$4");
-      $("newUserEmail").value=account.auth_email||account.email||"";
-      $("newUserPassword").value=sb?"":(account.password||"");
-      $("newUserRole").value=account.role||"operator";
-      $("newUserStatus").value=account.status||"ativo";
-      $("userSubmit").textContent="Salvar alterações";
-      $("userCancelEdit").classList.remove("hidden");
-      window.scrollTo({top:$("usersPanel").offsetTop-10,behavior:"smooth"});
-    }catch(error){
-      showMsg($("userMsg"),error.message||"Não foi possível carregar o usuário.");
-    }
-  });
-
-  document.querySelectorAll(".user-toggle").forEach(btn=>btn.onclick=async()=>{
-    if(!isAdminUser())return;
-    const id=btn.dataset.id;
-    const newStatus=btn.dataset.status==="ativo"?"bloqueado":"ativo";
-
-    if(sb){
-      try{
-        const {data,error}=await sb.from("profiles").select("id,name,cpf,role,status,auth_email").eq("id",id).single();
-        if(error||!data)throw new Error("Usuário não encontrado.");
-
-        await callAdminUsers("update",{
-          user_id:id,
-          name:data.name,
-          cpf:onlyDigits(data.cpf),
-          email:data.auth_email||"",
-          role:data.role,
-          status:newStatus
-        });
-
-        await renderDemoUsers();
-        showMsg($("userMsg"),newStatus==="ativo"?"Usuário ativado com sucesso.":"Usuário bloqueado com sucesso.");
-      }catch(error){
-        showMsg($("userMsg"),error.message||"Não foi possível alterar o status.");
-      }
-      return;
-    }
-
-    const account=demoAccounts.find(u=>u.id===id);
-    if(!account)return;
-    account.status=newStatus;
-    renderDemoUsers();
-  });
-
-  document.querySelectorAll(".user-delete").forEach(btn=>btn.onclick=async()=>{
-    if(!isAdminUser())return;
-
-    const id=btn.dataset.id;
+  document.querySelectorAll('.user-edit').forEach(btn=>btn.onclick=async()=>{
     let account;
 
-    try{
-      if(sb){
-        const {data,error}=await sb.from("profiles").select("id,name,cpf,role,status").eq("id",id).single();
-        if(error||!data)throw new Error("Usuário não encontrado.");
-        account=data;
-      }else{
-        account=demoAccounts.find(u=>u.id===id);
-        if(!account)return;
+    if(sb){
+      const {data,error}=await sb
+        .from("profiles")
+        .select("id,name,cpf,role,status")
+        .eq("id",btn.dataset.id)
+        .single();
+
+      if(error || !data){
+        showMsg($("userMsg"),"Usuário não encontrado.");
+        return;
       }
-
-      if(!confirm(`Excluir o usuário ${account.name}?\n\nEssa ação excluirá o acesso dele ao sistema e não poderá ser desfeita.`))return;
-
-      if(sb){
-        const result=await callAdminUsers("delete",{user_id:id});
-
-        if(id===currentProfile.id){
-          await logout();
-          return;
-        }
-
-        await renderDemoUsers();
-        showMsg($("userMsg"),result.message||"Usuário excluído com sucesso.");
-      }else{
-        const idx=demoAccounts.findIndex(u=>u.id===id);
-        if(idx>=0)demoAccounts.splice(idx,1);
-        renderDemoUsers();
-        showMsg($("userMsg"),"Usuário excluído com sucesso.");
-      }
-    }catch(error){
-      console.error("ARI-CPA7 delete user:",error);
-      showMsg($("userMsg"),error.message||"Não foi possível excluir o usuário.");
+      account=data;
+    }else{
+      account=demoAccounts.find(u=>u.id===btn.dataset.id);
+      if(!account)return;
     }
+
+    $("editingUserId").value=account.id;
+    $("newUserName").value=account.name || "";
+    $("newUserCpf").value=onlyDigits(account.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
+    $("newUserPassword").value=sb ? "" : (account.password || "");
+    $("newUserRole").value=account.role || "operator";
+    $("userSubmit").textContent='Salvar alterações';
+    $("userCancelEdit").classList.remove('hidden');
+    window.scrollTo({top:$('usersPanel').offsetTop-10,behavior:'smooth'});
+  });
+
+  document.querySelectorAll('.user-delete').forEach(btn=>btn.onclick=()=>{
+    if(!isAdminUser())return;
+    const account=demoAccounts.find(u=>u.id===btn.dataset.id);
+    if(!account)return;
+    if(!confirm(`Excluir o usuário ${account.name}?\n\nEssa ação não poderá ser desfeita.`))return;
+
+    const idx=demoAccounts.findIndex(u=>u.id===account.id);
+    if(idx>=0)demoAccounts.splice(idx,1);
+
+    const idx2=demoUsers.findIndex(u=>u.id===account.id);
+    if(idx2>=0)demoUsers.splice(idx2,1);
+
+    demoHistory.push({
+      date:new Date().toLocaleString('pt-BR'),
+      user:currentProfile.cpf,
+      action:'Exclusão de usuário',
+      detail:`${account.name} / ${account.cpf}`
+    });
+
+    renderDemoUsers();
+    showMsg($("userMsg"),'Usuário excluído com sucesso.');
   });
 }
 async function renderAllActivities(){
@@ -857,355 +850,95 @@ function renderHistory(){
     demoHistory.map(h=>`<tr><td>${h.date}</td><td>${h.user}</td><td>${h.action}</td><td>${h.detail}</td></tr>`).join("")
   }</tbody></table>`;
 }
-async function generateDemoReport(){
-  const resultEl = $("reportResult");
-  if(!resultEl) return;
+async function renderMonthlyReport(){
+  const box=$("reportResult");
+  if(!box) return;
+  box.innerHTML='<div class="empty">Carregando relatório mensal...</div>';
 
-  try{
-    if(!sb){
-      resultEl.innerHTML = `
-        <div class="item">
-          <strong>Relatório mensal</strong>
-          <p class="ari-muted">O relatório mensal depende dos dados reais do Supabase.</p>
-        </div>`;
-      return;
-    }
-
-    if(!isAdminUser()){
-      resultEl.innerHTML = `<div class="item"><strong>Acesso negado.</strong><p class="ari-muted">Somente administradores ativos podem visualizar o consolidado da equipe.</p></div>`;
-      return;
-    }
-
+  let rows=[];
+  if(sb){
     const {data,error}=await sb
       .from("activities")
-      .select("id,owner_id,saida_data,saida_hora,viatura,km_inicial,km_final,profiles(name,cpf,role)")
+      .select("id,owner_id,saida_data,saida_hora,viatura,km_inicial,km_final,profiles(name,cpf)")
       .order("saida_data",{ascending:false})
       .order("saida_hora",{ascending:false});
-
     if(error){
       console.error("ARI-CPA7: erro no relatório mensal",error);
-      resultEl.innerHTML=`<div class="item"><strong>Erro ao carregar relatório.</strong><p>${escHtml(error.message||"Erro no banco de dados.")}</p></div>`;
+      box.innerHTML=`<div class="empty">Não foi possível carregar o relatório mensal.<br><small>${escHtml(error.message||"Erro de autorização")}</small></div>`;
       return;
     }
-
-    const activities=(data||[]).filter(a=>a.saida_data);
-
-    /*
-     * Estrutura visual:
-     * MÊS
-     *   CHEFE DE EQUIPE
-     *      ações
-     *      km
-     *
-     * Não existe campo de busca nem seleção de mês.
-     * O mais recente aparece primeiro.
-     */
-    const months=new Map();
-
-    activities.forEach(a=>{
-      const monthKey=String(a.saida_data).slice(0,7);
-      if(!months.has(monthKey)){
-        months.set(monthKey,{
-          key:monthKey,
-          actions:0,
-          km:0,
-          chiefs:new Map()
-        });
-      }
-
-      const month=months.get(monthKey);
-      month.actions += 1;
-
-      const kmInicial=Number(a.km_inicial);
-      const kmFinal=Number(a.km_final);
-      if(Number.isFinite(kmInicial) && Number.isFinite(kmFinal) && kmFinal>=kmInicial){
-        month.km += kmFinal-kmInicial;
-      }
-
-      const chiefId=a.owner_id || `cpf-${a.profiles?.cpf||"sem-cpf"}`;
-      if(!month.chiefs.has(chiefId)){
-        month.chiefs.set(chiefId,{
-          name:a.profiles?.name || "Chefe de equipe não identificado",
-          cpf:a.profiles?.cpf || "—",
-          actions:0,
-          km:0
-        });
-      }
-
-      const chief=month.chiefs.get(chiefId);
-      chief.actions += 1;
-      if(Number.isFinite(kmInicial) && Number.isFinite(kmFinal) && kmFinal>=kmInicial){
-        chief.km += kmFinal-kmInicial;
-      }
-    });
-
-    const monthBlocks=[...months.values()].sort((a,b)=>b.key.localeCompare(a.key));
-
-    if(!monthBlocks.length){
-      resultEl.innerHTML=`
-        <div class="item">
-          <strong>Nenhuma atividade registrada.</strong>
-          <p class="ari-muted">Quando os chefes de equipe lançarem atividades, o consolidado mensal aparecerá automaticamente aqui.</p>
-        </div>`;
-      return;
-    }
-
-    resultEl.innerHTML=`
-      <div id="monthlyReportContainer">
-        ${monthBlocks.map(month=>{
-          const monthLabel=new Date(`${month.key}-01T12:00:00`).toLocaleDateString(
-            "pt-BR",{month:"long",year:"numeric"}
-          );
-
-          const chiefs=[...month.chiefs.values()].sort((a,b)=>{
-            if(b.actions!==a.actions)return b.actions-a.actions;
-            return b.km-a.km;
-          });
-
-          return `
-            <section class="item monthly-report-month">
-              <div class="monthly-report-header">
-                <div>
-                  <h3 style="margin:0;text-transform:capitalize">📅 ${escHtml(monthLabel)}</h3>
-                  <p class="ari-muted" style="margin:4px 0 0">
-                    ${month.actions} ação(ões) • ${month.km.toLocaleString("pt-BR")} km
-                  </p>
-                </div>
-              </div>
-
-              <div class="table-scroll">
-                <table class="admin-table">
-                  <thead>
-                    <tr>
-                      <th>Chefe de equipe</th>
-                      <th>CPF</th>
-                      <th>Ações realizadas</th>
-                      <th>KM rodados</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${chiefs.map(chief=>`
-                      <tr>
-                        <td><strong>${escHtml(chief.name)}</strong></td>
-                        <td>${escHtml(chief.cpf)}</td>
-                        <td>${chief.actions}</td>
-                        <td>${chief.km.toLocaleString("pt-BR")}</td>
-                      </tr>
-                    `).join("")}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <th colspan="2">TOTAL DO MÊS</th>
-                      <th>${month.actions}</th>
-                      <th>${month.km.toLocaleString("pt-BR")}</th>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </section>`;
-        }).join("")}
-      </div>`;
-
-    const printBtn=$("printReport");
-    if(printBtn){
-      printBtn.disabled=false;
-      printBtn.onclick=()=>printMonthlyReportAutomatic(monthBlocks);
-    }
-  }catch(error){
-    console.error("ARI-CPA7: relatório mensal",error);
-    resultEl.innerHTML=`
-      <div class="item">
-        <strong>Não foi possível carregar o relatório.</strong>
-        <p>${escHtml(error.message||"Erro inesperado.")}</p>
-      </div>`;
+    rows=(data||[]).map(a=>({
+      ...a,
+      ownerName:a.profiles?.name||a.owner_id||"—",
+      ownerCpf:a.profiles?.cpf||"—"
+    }));
+  }else{
+    rows=[...window.ariDemoActivities].map(a=>({
+      ...a,ownerName:a.ownerName||a.owner||"—",ownerCpf:a.ownerCpf||a.owner||"—",
+      saida_data:a.data,saida_hora:a.hora,km_inicial:a.kmInicial,km_final:a.kmFinal
+    }));
   }
-}
 
-function printMonthlyReportAutomatic(monthBlocks){
-  const blocks=monthBlocks.map(month=>{
-    const monthLabel=new Date(`${month.key}-01T12:00:00`).toLocaleDateString(
-      "pt-BR",{month:"long",year:"numeric"}
-    );
-    const chiefs=[...month.chiefs.values()].sort((a,b)=>{
-      if(b.actions!==a.actions)return b.actions-a.actions;
-      return b.km-a.km;
-    });
+  if(!rows.length){
+    box.innerHTML='<div class="empty">Nenhum lançamento registrado.</div>';
+    return;
+  }
 
-    return `
-      <h2 style="text-transform:capitalize">${escHtml(monthLabel)}</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Chefe de equipe</th>
-            <th>CPF</th>
-            <th>Ações realizadas</th>
-            <th>KM rodados</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${chiefs.map(chief=>`
-            <tr>
-              <td>${escHtml(chief.name)}</td>
-              <td>${escHtml(chief.cpf)}</td>
-              <td style="text-align:center">${chief.actions}</td>
-              <td style="text-align:right">${chief.km.toLocaleString("pt-BR")}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-        <tfoot>
-          <tr>
-            <th colspan="2">TOTAL DO MÊS</th>
-            <th>${month.actions}</th>
-            <th>${month.km.toLocaleString("pt-BR")}</th>
-          </tr>
-        </tfoot>
-      </table>`;
+  const months={};
+  for(const a of rows){
+    const month=String(a.saida_data||"").slice(0,7)||"Sem data";
+    if(!months[month]) months[month]={actions:0,km:0,chiefs:{}};
+    const m=months[month];
+    const owner=a.owner_id||a.ownerCpf||a.ownerName||"sem-identificação";
+    if(!m.chiefs[owner]) m.chiefs[owner]={name:a.ownerName||"—",cpf:a.ownerCpf||"—",actions:0,km:0};
+    const c=m.chiefs[owner];
+    const kmI=Number(a.km_inicial), kmF=Number(a.km_final);
+    const km=Number.isFinite(kmI)&&Number.isFinite(kmF)&&kmF>=kmI ? kmF-kmI : 0;
+    m.actions++; m.km+=km; c.actions++; c.km+=km;
+  }
+
+  const monthKeys=Object.keys(months).sort().reverse();
+  const monthName=k=>{
+    if(!/^\d{4}-\d{2}$/.test(k)) return k;
+    const [y,m]=k.split("-").map(Number);
+    return new Date(y,m-1,1).toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+  };
+
+  box.innerHTML=monthKeys.map(k=>{
+    const m=months[k];
+    const chiefs=Object.values(m.chiefs).sort((a,b)=>b.actions-a.actions||b.km-a.km||a.name.localeCompare(b.name));
+    return `<section class="item monthly-report-block">
+      <div class="item-head"><strong style="text-transform:capitalize">${escHtml(monthName(k))}</strong><strong>${m.actions} ações | ${m.km} KM</strong></div>
+      <div class="table-scroll"><table class="admin-table"><thead><tr><th>Chefe de Equipe</th><th>CPF</th><th>Ações</th><th>KM</th></tr></thead><tbody>
+      ${chiefs.map(c=>`<tr><td>${escHtml(c.name)}</td><td>${escHtml(c.cpf)}</td><td>${c.actions}</td><td>${c.km}</td></tr>`).join("")}
+      </tbody></table></div>
+    </section>`;
   }).join("");
 
-  const html=`<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<title>Relatório Mensal ARI-CPA7</title>
-<style>
-body{font-family:Arial,sans-serif;margin:28px;color:#111}
-h1{text-align:center;font-size:20px;margin-bottom:25px}
-h2{font-size:17px;margin-top:28px;border-bottom:1px solid #888;padding-bottom:6px}
-table{width:100%;border-collapse:collapse;margin:12px 0 24px}
-th,td{border:1px solid #999;padding:8px}
-th{font-weight:bold}
-tfoot th{font-size:14px}
-.footer{margin-top:28px;font-size:11px;color:#555}
-@media print{body{margin:15mm}}
-</style>
-</head>
-<body>
-<h1>RELATÓRIO MENSAL DE ATIVIDADES — ARI-CPA7</h1>
-${blocks}
-<div class="footer">
-Documento gerado pelo ARI-CPA7 em ${new Date().toLocaleString("pt-BR")}.
-</div>
-<script>window.onload=()=>window.print();</script>
-</body>
-</html>`;
-
-  const win=window.open("","_blank");
-  if(!win){
-    alert("O navegador bloqueou a janela do relatório. Permita pop-ups para o ARI-CPA7.");
-    return;
-  }
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+  const printBtn=$("printReport");
+  if(printBtn) printBtn.disabled=false;
 }
 
-function printMonthlyReport(monthLabel, summary, totalActions, totalKm){
-  const rows=summary.map(g=>`
-    <tr>
-      <td>${escHtml(g.name)}</td>
-      <td>${escHtml(g.cpf)}</td>
-      <td style="text-align:center">${g.actions}</td>
-      <td style="text-align:right">${g.km.toLocaleString("pt-BR")}</td>
-    </tr>`).join("");
-
-  const html=`<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<title>Relatório Mensal ARI-CPA7</title>
-<style>
-body{font-family:Arial,sans-serif;margin:28px;color:#111}
-h1{text-align:center;font-size:20px;margin-bottom:6px}
-h2{text-align:center;font-size:15px;font-weight:normal;margin-top:0}
-.summary{display:flex;gap:30px;justify-content:center;margin:22px 0;font-size:15px}
-table{width:100%;border-collapse:collapse;margin-top:20px}
-th,td{border:1px solid #999;padding:8px}
-th{font-weight:bold}
-tfoot th{font-size:14px}
-.footer{margin-top:28px;font-size:11px;color:#555}
-@media print{body{margin:15mm}}
-</style>
-</head>
-<body>
-<h1>RELATÓRIO MENSAL DE ATIVIDADES — ARI-CPA7</h1>
-<h2>${escHtml(monthLabel)}</h2>
-<div class="summary">
-  <div><strong>${totalActions}</strong> ações realizadas</div>
-  <div><strong>${totalKm.toLocaleString("pt-BR")}</strong> km rodados</div>
-</div>
-<table>
-<thead><tr>
-<th>Equipe / Agente</th><th>CPF</th><th>Ações realizadas</th><th>KM rodados</th>
-</tr></thead>
-<tbody>
-${rows || '<tr><td colspan="4" style="text-align:center">Nenhuma atividade registrada neste mês.</td></tr>'}
-</tbody>
-<tfoot><tr>
-<th colspan="2">TOTAL DA EQUIPE</th>
-<th>${totalActions}</th>
-<th>${totalKm.toLocaleString("pt-BR")}</th>
-</tr></tfoot>
-</table>
-<div class="footer">
-Documento gerado pelo ARI-CPA7 em ${new Date().toLocaleString("pt-BR")}.
-</div>
-<script>window.onload=()=>{window.print();}</script>
-</body>
-</html>`;
-
-  const win=window.open("","_blank");
-  if(!win){
-    alert("O navegador bloqueou a janela do relatório. Permita pop-ups para o ARI-CPA7.");
-    return;
-  }
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
+async function printMonthlyReport(){
+  await renderMonthlyReport();
+  window.print();
 }
 
-document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",()=>{
+function generateDemoReport(){ return renderMonthlyReport(); }
+
+function bindOptional(id,event,handler){
+  const el=$(id); if(el) el.addEventListener(event,handler);
+}
+
+document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",async()=>{
   showAdminPanel(btn.dataset.panel);
-  if(btn.dataset.panel==="usersPanel")renderDemoUsers();
-  if(btn.dataset.panel==="activitiesPanel")renderAllActivities();
-  if(btn.dataset.panel==="historyPanel")renderHistory();
-  if(btn.dataset.panel==="vehiclesPanel")renderDemoVehicles();
+  if(btn.dataset.panel==="usersPanel") await renderDemoUsers();
+  if(btn.dataset.panel==="activitiesPanel") await renderAllActivities();
+  if(btn.dataset.panel==="historyPanel") renderHistory();
+  if(btn.dataset.panel==="vehiclesPanel") renderDemoVehicles();
+  if(btn.dataset.panel==="reportsPanel") await renderMonthlyReport();
 }));
 document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click",hideAdminPanels));
-$("activitySearchBtn").addEventListener("click",renderAllActivities);
-
-function initMonthlyReportUI(){
-  const result=$("reportResult");
-  if(!result)return;
-
-  let controls=document.getElementById("monthlyReportControls");
-  if(!controls){
-    controls=document.createElement("div");
-    controls.id="monthlyReportControls";
-    controls.className="actions";
-    controls.style.marginBottom="12px";
-    controls.innerHTML=`
-      <button id="generateReport" class="primary" type="button">
-        Atualizar relatório mensal
-      </button>
-      <button id="printReport" class="secondary" type="button" disabled>
-        Gerar PDF / Imprimir
-      </button>`;
-    result.parentNode.insertBefore(controls,result);
-    $("generateReport").addEventListener("click",generateDemoReport);
-  }
-
-  /* Abre mostrando automaticamente todos os meses. */
-  generateDemoReport();
-}
-
-document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",()=>{
-  showAdminPanel(btn.dataset.panel);
-  if(btn.dataset.panel==="usersPanel")renderDemoUsers();
-  if(btn.dataset.panel==="activitiesPanel")renderAllActivities();
-  if(btn.dataset.panel==="historyPanel")renderHistory();
-  if(btn.dataset.panel==="vehiclesPanel")renderDemoVehicles();
-  if(btn.dataset.panel==="reportsPanel")initMonthlyReportUI();
-}));
-
-document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click",hideAdminPanels));
-$("activitySearchBtn").addEventListener("click",renderAllActivities);
+bindOptional("activitySearchBtn","click",renderAllActivities);
+bindOptional("generateReport","click",renderMonthlyReport);
+bindOptional("printReport","click",printMonthlyReport);
