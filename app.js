@@ -176,14 +176,34 @@ async function logout(){
 $("logoutOperator").onclick=logout;$("logoutAdmin").onclick=logout;
 
 async function loadActivities(){
-  const {data,error}=await sb.from("activities").select("*").order("saida_data",{ascending:false}).order("saida_hora",{ascending:false});
-  const box=$("activityList"); box.innerHTML="";
-  if(error){box.textContent="Não foi possível carregar as atividades.";return}
-  if(!data.length){box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';return}
+  if(!sb || !currentProfile?.id) return;
+
+  // O chefe de equipe deve enxergar e editar somente os próprios lançamentos.
+  // O ID do usuário autenticado é a referência segura do proprietário.
+  const {data,error}=await sb.from("activities")
+    .select("*")
+    .eq("owner_id", currentProfile.id)
+    .order("saida_data",{ascending:false})
+    .order("saida_hora",{ascending:false});
+
+  const box=$("activityList") || $("myActivities");
+  if(!box) return;
+  box.innerHTML="";
+  if(error){
+    console.error("ARI-CPA7: erro ao carregar atividades do chefe", error);
+    box.textContent="Não foi possível carregar suas atividades.";
+    return;
+  }
+  if(!data || !data.length){
+    box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';
+    return;
+  }
   data.forEach(a=>{
-    const el=document.createElement("article");el.className="item";
-    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>Destino: ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
-    el.querySelector("button").onclick=()=>editActivity(a);box.appendChild(el);
+    const el=document.createElement("article");
+    el.className="item";
+    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>${a.saida_local||"—"} → ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
+    el.querySelector("button").onclick=()=>editActivity(a);
+    box.appendChild(el);
   });
 }
 
@@ -321,10 +341,16 @@ $("activityForm").addEventListener("submit",async e=>{
 
   let result;
   if(id){
-    result = await sb.from("activities").update(payload).eq("id",id);
+    // Só permite ao chefe alterar um lançamento que pertença a ele.
+    result = await sb.from("activities")
+      .update(payload)
+      .eq("id",id)
+      .eq("owner_id",currentProfile.id);
   }else{
-    // owner_id é definido pelo trigger/RLS do banco a partir do usuário autenticado.
-    result = await sb.from("activities").insert(payload);
+    // Gravamos explicitamente o proprietário. Isso garante que o lançamento
+    // permaneça vinculado ao chefe mesmo após sair e entrar novamente.
+    result = await sb.from("activities")
+      .insert({...payload, owner_id:currentProfile.id});
   }
 
   if(result.error){
