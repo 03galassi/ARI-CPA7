@@ -633,19 +633,105 @@ function renderHistory(){
     demoHistory.map(h=>`<tr><td>${h.date}</td><td>${h.user}</td><td>${h.action}</td><td>${h.detail}</td></tr>`).join("")
   }</tbody></table>`;
 }
-function generateDemoReport(){
-  const start=$("reportStart").value,end=$("reportEnd").value;
-  const list=typeof activities!=="undefined"?activities.filter(a=>{
-    if(!start && !end)return true;
-    return (!start||a.data>=start)&&(!end||a.data<=end);
-  }):[];
-  const totalKm=list.reduce((s,a)=>{
-    const x=Number(a.kmInicial),y=Number(a.kmFinal);
-    return s+(Number.isFinite(x)&&Number.isFinite(y)&&y>=x?y-x:0);
+async function generateDemoReport(){
+  const start=$("reportStart").value;
+  const end=$("reportEnd").value;
+  const box=$("reportResult");
+
+  if(!sb){
+    box.innerHTML='<div class="item"><strong>Relatório ARI-CPA7</strong><p>O sistema não está conectado ao banco de dados.</p></div>';
+    $("printReport").disabled=false;
+    return;
+  }
+
+  if(start && end && start>end){
+    box.innerHTML='<div class="item"><strong>Período inválido</strong><p>A data inicial não pode ser posterior à data final.</p></div>';
+    return;
+  }
+
+  box.innerHTML='<div class="item">Buscando os lançamentos no banco de dados...</div>';
+
+  let query=sb.from("activities")
+    .select("id,owner_id,saida_data,saida_hora,viatura,km_inicial,km_final,saida_local,destino,retorno_local,retorno_data,retorno_hora,descricao,profiles(name,cpf)")
+    .order("saida_data",{ascending:true})
+    .order("saida_hora",{ascending:true});
+
+  if(start) query=query.gte("saida_data",start);
+  if(end) query=query.lte("saida_data",end);
+
+  const {data,error}=await query;
+
+  if(error){
+    console.error("ARI-CPA7: erro ao gerar relatório",error);
+    box.innerHTML=`<div class="item"><strong>Erro ao gerar relatório</strong><p>${escHtml(error.message||"Não foi possível consultar os lançamentos.")}</p></div>`;
+    return;
+  }
+
+  const rows=data||[];
+  const totalKm=rows.reduce((sum,a)=>{
+    const ini=Number(a.km_inicial), fim=Number(a.km_final);
+    return sum+(Number.isFinite(ini)&&Number.isFinite(fim)&&fim>=ini?fim-ini:0);
   },0);
-  $("reportResult").innerHTML=`<div class="item"><strong>Relatório ARI-CPA7</strong><p>Período: ${start||"início"} a ${end||"fim"}</p><p>Registros: <strong>${list.length}</strong></p><p>KM apurados: <strong>${totalKm}</strong></p><p class="ari-muted">Na versão conectada ao banco, este relatório será gerado com todos os registros autorizados.</p></div>`;
+
+  // Agrupa automaticamente por mês e por Chefe de Equipe.
+  const groups={};
+  rows.forEach(a=>{
+    const month=(a.saida_data||"Sem data").slice(0,7);
+    const ownerId=a.owner_id||"sem-owner";
+    const ownerName=a.profiles?.name||"Chefe de Equipe não identificado";
+    const ownerCpf=a.profiles?.cpf||"";
+    const key=`${month}|${ownerId}`;
+    if(!groups[key]) groups[key]={month,ownerName,ownerCpf,count:0,km:0,rows:[]};
+    groups[key].count++;
+    const ini=Number(a.km_inicial), fim=Number(a.km_final);
+    if(Number.isFinite(ini)&&Number.isFinite(fim)&&fim>=ini) groups[key].km+=fim-ini;
+    groups[key].rows.push(a);
+  });
+
+  const grouped=Object.values(groups).sort((a,b)=>
+    `${a.month}-${a.ownerName}`.localeCompare(`${b.month}-${b.ownerName}`)
+  );
+
+  const monthLabel=(ym)=>{
+    if(!/^\d{4}-\d{2}$/.test(ym)) return ym;
+    const [y,m]=ym.split("-");
+    return new Date(Number(y),Number(m)-1,1).toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+  };
+
+  const details=grouped.map(g=>`<tr>
+    <td>${escHtml(monthLabel(g.month))}</td>
+    <td>${escHtml(g.ownerName)}<br><small>${escHtml(g.ownerCpf)}</small></td>
+    <td>${g.count}</td>
+    <td>${g.km}</td>
+  </tr>`).join("");
+
+  const activityRows=rows.map(a=>{
+    const ini=a.km_inicial??"—", fim=a.km_final??"—";
+    const km=(Number.isFinite(Number(ini))&&Number.isFinite(Number(fim))&&Number(fim)>=Number(ini))?Number(fim)-Number(ini):0;
+    return `<tr>
+      <td>${escHtml(a.saida_data||"—")} ${escHtml((a.saida_hora||"").slice(0,5))}</td>
+      <td>${escHtml(a.profiles?.name||"—")}<br><small>${escHtml(a.profiles?.cpf||"")}</small></td>
+      <td>${escHtml(a.saida_local||"—")}</td>
+      <td>${escHtml(a.destino||"—")}</td>
+      <td><strong>${escHtml(a.viatura||"—")}</strong></td>
+      <td>${ini} → ${fim}<br><small>${km} km</small></td>
+    </tr>`;
+  }).join("");
+
+  box.innerHTML=`
+    <div class="item">
+      <strong>Relatório ARI-CPA7</strong>
+      <p>Período: <strong>${escHtml(start||"início")}</strong> a <strong>${escHtml(end||"fim")}</strong></p>
+      <p>Registros: <strong>${rows.length}</strong></p>
+      <p>KM apurados: <strong>${totalKm}</strong></p>
+    </div>
+    <h3>Produção por mês e Chefe de Equipe</h3>
+    ${grouped.length ? `<div class="table-scroll"><table class="admin-table"><thead><tr><th>Mês</th><th>Chefe de Equipe</th><th>Ações</th><th>KM</th></tr></thead><tbody>${details}</tbody></table></div>` : '<div class="empty">Nenhum lançamento encontrado para o período informado.</div>'}
+    ${rows.length ? `<h3>Lançamentos encontrados</h3><div class="table-scroll"><table class="admin-table"><thead><tr><th>Data/hora</th><th>Chefe de Equipe</th><th>Saída</th><th>Destino</th><th>Viatura</th><th>KM</th></tr></thead><tbody>${activityRows}</tbody></table></div>` : ''}`;
+
   $("printReport").disabled=false;
 }
+
 document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",()=>{
   showAdminPanel(btn.dataset.panel);
   if(btn.dataset.panel==="usersPanel")renderDemoUsers();
