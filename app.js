@@ -57,13 +57,36 @@ async function emailForCpf(cpf){
   }
   return null;
 }
+async function roleForCpf(cpf){
+  const normalized=onlyDigits(cpf);
+  if(normalized === "82011435153") return "admin";
+  if(!sb) return null;
+  try{
+    const {data,error}=await sb.rpc("get_login_role",{p_cpf:normalized});
+    if(error) throw error;
+    if(typeof data === "string") return data.trim();
+    if(Array.isArray(data) && data.length){
+      const value=data[0]?.role || data[0];
+      return typeof value === "string" ? value.trim() : null;
+    }
+  }catch(err){
+    console.error("ARI-CPA7: erro ao identificar perfil",err);
+  }
+  return null;
+}
+
 function showMsg(el,text){el.textContent=text;el.classList.remove("hidden");}
 function hideMsg(el){el.classList.add("hidden");}
+
+// Recuperação de senha disponível para Administradores e Chefes de Equipe.
+const forgotBtn=$("forgotBtn");
+if(forgotBtn) forgotBtn.classList.remove("hidden");
 
 $("cpf").addEventListener("input",e=>{
   let v=onlyDigits(e.target.value).slice(0,11);
   e.target.value=v.replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d)/,"$1.$2").replace(/(\d{3})(\d{1,2})$/,"$1-$2");
 });
+
 $("password").addEventListener("input",e=>e.target.value=onlyDigits(e.target.value).slice(0,6));
 
 $("loginForm").addEventListener("submit", async e=>{
@@ -176,14 +199,59 @@ async function logout(){
 $("logoutOperator").onclick=logout;$("logoutAdmin").onclick=logout;
 
 async function loadActivities(){
-  const {data,error}=await sb.from("activities").select("*").order("saida_data",{ascending:false}).order("saida_hora",{ascending:false});
-  const box=$("activityList"); box.innerHTML="";
-  if(error){box.textContent="Não foi possível carregar as atividades.";return}
-  if(!data.length){box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';return}
-  data.forEach(a=>{
-    const el=document.createElement("article");el.className="item";
-    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>Destino: ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
-    el.querySelector("button").onclick=()=>editActivity(a);box.appendChild(el);
+  if(!sb || !currentProfile) return;
+
+  const {data,error}=await sb.from("activities")
+    .select("*")
+    .eq("owner_id",currentProfile.id)
+    .order("saida_data",{ascending:false})
+    .order("saida_hora",{ascending:false});
+
+  // A interface antiga usava #activityList; a interface atual usa #myActivities.
+  // Aceitamos os dois para evitar que uma versão do HTML quebre o carregamento.
+  const box=$("activityList") || $("myActivities");
+  if(!box){
+    console.warn("ARI-CPA7: nenhum contêiner de atividades encontrado no HTML.");
+    return;
+  }
+
+  if(error){
+    console.error("ARI-CPA7: erro ao carregar atividades",error);
+    box.innerHTML='<div class="empty">Não foi possível carregar suas atividades.</div>';
+    return;
+  }
+
+  const rows=data||[];
+  const fieldCount=$("fieldCount");
+  const fieldKm=$("fieldKm");
+  if(fieldCount) fieldCount.textContent=rows.length;
+  const totalKm=rows.reduce((s,a)=>{
+    const x=Number(a.km_inicial), y=Number(a.km_final);
+    return s+(Number.isFinite(x)&&Number.isFinite(y)&&y>=x?y-x:0);
+  },0);
+  if(fieldKm) fieldKm.textContent=totalKm;
+
+  if(!rows.length){
+    box.innerHTML='<div class="empty">Nenhuma atividade lançada. Toque em “+ Nova atividade” para começar.</div>';
+    return;
+  }
+
+  box.innerHTML=rows.map(a=>{
+    const complete=!!(a.retorno_data&&a.retorno_hora&&a.km_final!==null&&a.km_final!==undefined);
+    return `<div class="item">
+      <div class="item-head">
+        <strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong>
+        <button class="secondary real-edit" data-id="${a.id}">Editar</button>
+      </div>
+      <div>${a.saida_local||"—"} → ${a.destino||"—"}</div>
+      <small>Saída: ${a.saida_hora||"—"} | KM inicial: ${a.km_inicial??"—"}</small>
+      <div class="edit-note ${complete?'complete':'pending'}">${complete?'Retorno registrado':'Aguardando retorno'}</div>
+    </div>`;
+  }).join("");
+
+  box.querySelectorAll(".real-edit").forEach(btn=>{
+    const a=rows.find(x=>String(x.id)===String(btn.dataset.id));
+    if(a) btn.onclick=()=>editActivity(a);
   });
 }
 
@@ -250,6 +318,7 @@ $("activityForm").addEventListener("submit",async e=>{
 
   const id = $("activityId").value;
   const payload = {
+    owner_id: currentProfile?.id || null,
     saida_local: $("saidaLocal").value,
     saida_data: $("saidaData").value,
     saida_hora: $("saidaHora").value,
@@ -261,7 +330,8 @@ $("activityForm").addEventListener("submit",async e=>{
     retorno_local: $("retornoLocal").value || null,
     km_final: $("kmFinal").value ? Number($("kmFinal").value) : null,
     retorno_data: $("retornoData").value || null,
-    retorno_hora: $("retornoHora").value || null
+    retorno_hora: $("retornoHora").value || null,
+    owner_id: currentProfile.id
   };
 
   if(!payload.saida_local || !payload.saida_data || !payload.saida_hora || !payload.viatura ||
@@ -321,9 +391,8 @@ $("activityForm").addEventListener("submit",async e=>{
 
   let result;
   if(id){
-    result = await sb.from("activities").update(payload).eq("id",id);
+    result = await sb.from("activities").update(payload).eq("id",id).eq("owner_id",currentProfile.id);
   }else{
-    // owner_id é definido pelo trigger/RLS do banco a partir do usuário autenticado.
     result = await sb.from("activities").insert(payload);
   }
 
@@ -469,7 +538,13 @@ function openActivityPdf(a){
 }
 
 /* ===== Painel administrativo ===== */
-const demoUsers = demoAccounts.map(u=>({id:u.id,name:u.name,cpf:u.cpf,role:u.role==='admin'?'Administrador':'Agente de Campo',status:u.status==='ativo'?'Ativo':'Bloqueado'}));
+const demoUsers = demoAccounts.map(u=>({
+  id:u.id,
+  name:u.name,
+  cpf:u.cpf,
+  role:u.role==='admin'?'Administrador':'Chefe de Equipe',
+  status:u.status==='ativo'?'Ativo':'Bloqueado'
+}));
 let demoHistory = [
   {date:new Date().toLocaleString("pt-BR"), user:"82011435153", action:"Login administrativo", detail:"Acesso ao painel"}
 ];
@@ -483,269 +558,226 @@ function hideAdminPanels(){
   document.querySelectorAll(".adminPanel").forEach(p=>p.classList.add("hidden"));
   $("adminHome").classList.remove("hidden");
 }
+
+/* O administrador agora é identificado pelo perfil real do Supabase.
+   A regra antiga que exigia id === "demo-admin" foi removida. */
+function isAdminUser(){
+  return !!currentProfile &&
+         currentProfile.role === "admin" &&
+         currentProfile.status === "ativo";
+}
+
 async function renderDemoUsers(){
-  const usersBox = $("usersContent");
+  let users = [];
 
-  // Cadastro real: Supabase + Edge Function admin-users.
   if(sb){
-    usersBox.innerHTML = `
-      <form id="userForm" class="grid admin-user-form">
-        <input type="hidden" id="editingUserId" value="">
-        <div><label>Nome completo</label><input id="newUserName" required></div>
-        <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
-        <div><label>E-mail</label><input id="newUserEmail" type="email" autocomplete="email" required placeholder="usuario@exemplo.com"></div>
-        <div><label>Senha</label><input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="6 dígitos"></div>
-        <div><label>Perfil</label>
-          <select id="newUserRole">
-            <option value="operator">Agente de Campo</option>
-            <option value="admin">Administrador</option>
-          </select>
-        </div>
-        <div class="actions full">
-          <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
-          <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
-        </div>
-      </form>
-      <p id="userMsg" class="msg hidden"></p>
-      <h3>Usuários cadastrados</h3>
-      <div id="usersTableBox" class="table-scroll"><div class="empty">Carregando usuários...</div></div>
-    `;
+    const {data,error} = await sb
+      .from("profiles")
+      .select("id,name,cpf,role,status,auth_email")
+      .order("name",{ascending:true});
 
-    const cpfInput = $("newUserCpf");
-    cpfInput.addEventListener("input", e => {
-      let v = onlyDigits(e.target.value).slice(0,11);
-      e.target.value = v
-        .replace(/(\d{3})(\d)/,"$1.$2")
-        .replace(/(\d{3})(\d)/,"$1.$2")
-        .replace(/(\d{3})(\d{1,2})$/,"$1-$2");
-    });
-    $("newUserPassword").addEventListener("input", e => {
-      e.target.value = onlyDigits(e.target.value).slice(0,6);
-    });
-
-    async function callAdminUsers(action, body={}){
-      const {data: sessionData, error: sessionError} = await sb.auth.getSession();
-      if(sessionError || !sessionData?.session?.access_token){
-        throw new Error("Sessão administrativa não encontrada. Faça login novamente.");
-      }
-
-      const response = await fetch(
-        `${SUPABASE_URL}/functions/v1/admin-users`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${sessionData.session.access_token}`
-          },
-          body: JSON.stringify({action, ...body})
-        }
-      );
-
-      let result = {};
-      try { result = await response.json(); } catch (_) {}
-
-      if(!response.ok){
-        throw new Error(result.error || "Não foi possível concluir a operação.");
-      }
-      return result;
+    if(error){
+      console.error("ARI-CPA7: erro ao carregar usuários", error);
+      $("usersContent").innerHTML =
+        '<div class="empty">Não foi possível carregar os usuários do Supabase.</div>';
+      return;
     }
-
-    async function loadRealUsers(){
-      const {data, error} = await sb
-        .from("profiles")
-        .select("id,name,cpf,auth_email,role,status")
-        .order("name", {ascending:true});
-
-      if(error){
-        $("usersTableBox").innerHTML =
-          `<div class="empty">Não foi possível carregar os usuários: ${escHtml(error.message)}</div>`;
-        return;
-      }
-
-      const rows = (data || []).map(u => `
-        <tr>
-          <td>${escHtml(u.name)}</td>
-          <td>${escHtml(u.cpf)}</td>
-          <td>${escHtml(u.auth_email || "—")}</td>
-          <td>${u.role === "admin" ? "Administrador" : "Agente de Campo"}</td>
-          <td class="status ${u.status === "ativo" ? "ativo" : "bloqueado"}">
-            ${u.status === "ativo" ? "Ativo" : "Bloqueado"}
-          </td>
-          <td class="actions-cell">
-            <button class="secondary user-edit" data-id="${u.id}">Editar</button>
-            <button class="danger user-delete" data-id="${u.id}">Excluir</button>
-          </td>
-        </tr>
-      `).join("");
-
-      $("usersTableBox").innerHTML = `
-        <table class="admin-table">
-          <thead>
-            <tr>
-              <th>Nome</th>
-              <th>CPF</th>
-              <th>E-mail</th>
-              <th>Perfil</th>
-              <th>Status</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>${rows || `<tr><td colspan="6">Nenhum usuário cadastrado.</td></tr>`}</tbody>
-        </table>
-      `;
-
-      document.querySelectorAll(".user-edit").forEach(btn => btn.onclick = async () => {
-        const user = (data || []).find(u => u.id === btn.dataset.id);
-        if(!user) return;
-
-        $("editingUserId").value = user.id;
-        $("newUserName").value = user.name || "";
-        $("newUserCpf").value = onlyDigits(user.cpf || "").replace(
-          /(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"
-        );
-        $("newUserEmail").value = user.auth_email || "";
-        $("newUserPassword").value = "";
-        $("newUserPassword").required = false;
-        $("newUserPassword").placeholder = "Deixe vazio para manter";
-        $("newUserRole").value = user.role || "operator";
-        $("userSubmit").textContent = "Salvar alterações";
-        $("userCancelEdit").classList.remove("hidden");
-        window.scrollTo({top:$("usersPanel").offsetTop-10,behavior:"smooth"});
-      });
-
-      document.querySelectorAll(".user-delete").forEach(btn => btn.onclick = async () => {
-        const user = (data || []).find(u => u.id === btn.dataset.id);
-        if(!user) return;
-
-        if(!confirm(`Excluir o usuário ${user.name}?\n\nEssa ação não poderá ser desfeita.`)) return;
-
-        try{
-          await callAdminUsers("delete", {user_id:user.id});
-          showMsg($("userMsg"), "Usuário excluído com sucesso.");
-          await loadRealUsers();
-        }catch(err){
-          showMsg($("userMsg"), err.message || "Não foi possível excluir o usuário.");
-        }
-      });
-    }
-
-    $("userForm").addEventListener("submit", async e => {
-      e.preventDefault();
-      hideMsg($("userMsg"));
-
-      const editingId = $("editingUserId").value;
-      const name = $("newUserName").value.trim();
-      const cpf = onlyDigits($("newUserCpf").value);
-      const email = $("newUserEmail").value.trim();
-      const password = $("newUserPassword").value;
-      const role = $("newUserRole").value;
-
-      if(!name){
-        showMsg($("userMsg"), "Informe o nome.");
-        return;
-      }
-      if(!cpfValid(cpf)){
-        showMsg($("userMsg"), "Informe um CPF válido.");
-        return;
-      }
-      if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-        showMsg($("userMsg"), "Informe um e-mail válido.");
-        return;
-      }
-      if(!editingId && !/^\d{6}$/.test(password)){
-        showMsg($("userMsg"), "A senha deve possuir exatamente 6 dígitos.");
-        return;
-      }
-      if(editingId && password && !/^\d{6}$/.test(password)){
-        showMsg($("userMsg"), "Se alterar a senha, ela deve possuir exatamente 6 dígitos.");
-        return;
-      }
-
-      try{
-        $("userSubmit").disabled = true;
-
-        if(editingId){
-          const payload = {
-            user_id: editingId,
-            name,
-            cpf,
-            email,
-            role,
-            status: "ativo"
-          };
-          if(password) payload.password = password;
-
-          await callAdminUsers("update", payload);
-          showMsg($("userMsg"), "Usuário atualizado com sucesso.");
-        }else{
-          await callAdminUsers("create", {
-            name,
-            cpf,
-            email,
-            password,
-            role
-          });
-          showMsg($("userMsg"), "Usuário cadastrado com sucesso.");
-        }
-
-        $("userForm").reset();
-        $("editingUserId").value = "";
-        $("newUserPassword").required = true;
-        $("newUserPassword").placeholder = "6 dígitos";
-        $("userSubmit").textContent = "Cadastrar usuário";
-        $("userCancelEdit").classList.add("hidden");
-        await loadRealUsers();
-
-      }catch(err){
-        console.error("ARI-CPA7 admin-users:", err);
-        showMsg($("userMsg"), err.message || "Não foi possível concluir o cadastro.");
-      }finally{
-        $("userSubmit").disabled = false;
-      }
-    });
-
-    $("userCancelEdit").onclick = () => {
-      $("userForm").reset();
-      $("editingUserId").value = "";
-      $("newUserPassword").required = true;
-      $("newUserPassword").placeholder = "6 dígitos";
-      $("userSubmit").textContent = "Cadastrar usuário";
-      $("userCancelEdit").classList.add("hidden");
-      hideMsg($("userMsg"));
-    };
-
-    await loadRealUsers();
-    return;
+    users = data || [];
+  }else{
+    users = demoAccounts;
   }
 
-  // Modo de demonstração mantido para funcionamento offline.
-  const rows=demoAccounts.map(u=>`<tr>
+  const rows = users.map(u=>`<tr>
     <td>${escHtml(u.name)}</td>
     <td>${escHtml(u.cpf)}</td>
-    <td>—</td>
-    <td>${u.role==='admin'?'Administrador':'Agente de Campo'}</td>
-    <td class="status ${u.status}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
+    <td>${escHtml(u.auth_email || "—")}</td>
+    <td>${u.role==='admin'?'Administrador':'Chefe de Equipe'}</td>
+    <td class="status ${u.status==='ativo'?'ativo':'bloqueado'}">${u.status==='ativo'?'Ativo':'Bloqueado'}</td>
     <td class="actions-cell">
-      <button class="secondary user-edit" data-id="${u.id}">Editar</button>
-      <button class="danger user-delete" data-id="${u.id}">Excluir</button>
+      <button class="secondary user-edit" data-id="${escHtml(u.id)}">Editar</button>
+      ${!sb ? `<button class="danger user-delete" data-id="${escHtml(u.id)}">Excluir</button>` : ""}
     </td>
-  </tr>`).join('');
+  </tr>`).join("");
 
   $("usersContent").innerHTML = `
     <form id="userForm" class="grid admin-user-form">
       <input type="hidden" id="editingUserId" value="">
       <div><label>Nome completo</label><input id="newUserName" required></div>
       <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
-      <div><label>E-mail</label><input id="newUserEmail" type="email" required placeholder="usuario@exemplo.com"></div>
-      <div><label>Senha</label><input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" required placeholder="6 dígitos"></div>
-      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Agente de Campo</option><option value="admin">Administrador</option></select></div>
-      <div class="actions full"><button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button></div>
+      <div><label>E-mail</label><input id="newUserEmail" type="email" autocomplete="email" required placeholder="usuario@exemplo.com"></div>
+      <div>
+        <label>Senha</label>
+        <input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" placeholder="6 dígitos">
+        <small class="muted">Na edição de usuário real, a senha não é alterada por esta tela.</small>
+      </div>
+      <div><label>Perfil</label><select id="newUserRole"><option value="operator">Chefe de Equipe</option><option value="admin">Administrador</option></select></div>
+      <div class="actions full">
+        <button id="userSubmit" class="primary" type="submit">Cadastrar usuário</button>
+        <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
+      </div>
     </form>
+    <p id="userMsg" class="msg hidden"></p>
     <h3>Usuários cadastrados</h3>
-    <div class="table-scroll"><table class="admin-table">
-      <thead><tr><th>Nome</th><th>CPF</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table></div>`;
+    <div class="table-scroll"><table class="admin-table"><thead><tr><th>Nome</th><th>CPF</th><th>E-mail</th><th>Perfil</th><th>Status</th><th>Ações</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+
+  const cpfInput=$("newUserCpf");
+  cpfInput.addEventListener('input',e=>{
+    let v=onlyDigits(e.target.value).slice(0,11);
+    e.target.value=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+  });
+  $("newUserPassword").addEventListener('input',e=>{
+    e.target.value=onlyDigits(e.target.value).slice(0,6);
+  });
+
+  $("userForm").addEventListener('submit',async e=>{
+    e.preventDefault();
+
+    if(!isAdminUser()){
+      showMsg($("userMsg"),"Somente um administrador ativo pode cadastrar e editar usuários.");
+      return;
+    }
+
+    const editingId=$("editingUserId").value;
+    const name=$("newUserName").value.trim();
+    const cpf=onlyDigits(cpfInput.value);
+    const email=$("newUserEmail").value.trim().toLowerCase();
+    const password=$("newUserPassword").value;
+    const role=$("newUserRole").value;
+
+    if(!name){showMsg($("userMsg"),'Informe o nome.');return;}
+    if(!cpfValid(cpf)){showMsg($("userMsg"),'Informe um CPF válido.');return;}
+    if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){showMsg($("userMsg"),'Informe um e-mail válido.');return;}
+    if(!editingId && password.length!==6){showMsg($("userMsg"),'A senha inicial deve possuir exatamente 6 dígitos.');return;}
+
+    if(sb){
+      const duplicate = users.some(u=>u.cpf===cpf && u.id!==editingId);
+      if(duplicate){showMsg($("userMsg"),'Este CPF já está cadastrado.');return;}
+      const duplicateEmail = users.some(u=>String(u.auth_email||'').toLowerCase()===email && u.id!==editingId);
+      if(duplicateEmail){showMsg($("userMsg"),'Este e-mail já está cadastrado.');return;}
+
+      const action = editingId ? "update" : "create";
+      const body = {action, name, cpf, email, role};
+      if(editingId) body.user_id=editingId;
+      if(password) body.password=password;
+
+      const {data,error}=await sb.functions.invoke("admin-users",{body});
+      if(error){
+        console.error("ARI-CPA7: erro na função admin-users",error,data);
+        const detail=data?.error || data?.message || error.message || "verifique a função admin-users.";
+        showMsg($("userMsg"),`Não foi possível salvar o usuário: ${detail}`);
+        return;
+      }
+      if(data?.error){showMsg($("userMsg"),`Não foi possível salvar o usuário: ${data.error}`);return;}
+
+      showMsg($("userMsg"),editingId?'Usuário atualizado com sucesso.':'Usuário cadastrado com sucesso.');
+      await renderDemoUsers();
+      return;
+    }
+
+    /* Modo demonstração */
+    if(password.length!==6){
+      showMsg($("userMsg"),'A senha deve possuir exatamente 6 dígitos.');
+      return;
+    }
+
+    const duplicate=demoAccounts.some(u=>u.cpf===cpf && u.id!==editingId);
+    if(duplicate){
+      showMsg($("userMsg"),'Este CPF já está cadastrado.');
+      return;
+    }
+
+    if(editingId){
+      const account=demoAccounts.find(u=>u.id===editingId);
+      if(!account){showMsg($("userMsg"),'Usuário não encontrado.');return;}
+      account.name=name;
+      account.cpf=cpf;
+      account.password=password;
+      account.auth_email=email;
+      account.role=role;
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Edição de usuário',
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Chefe de Equipe'}`
+      });
+      await renderDemoUsers();
+      showMsg($("userMsg"),'Usuário atualizado com sucesso.');
+    }else{
+      const account={id:'demo-'+crypto.randomUUID(),cpf,password,name,role,status:'ativo',auth_email:email};
+      demoAccounts.push(account);
+      demoUsers.push({
+        id:account.id,
+        name,
+        cpf,
+        role:role==='admin'?'Administrador':'Chefe de Equipe',
+        status:'Ativo'
+      });
+      demoHistory.push({
+        date:new Date().toLocaleString('pt-BR'),
+        user:currentProfile.cpf,
+        action:'Cadastro de usuário',
+        detail:`${name} / ${cpf} / ${role==='admin'?'Administrador':'Chefe de Equipe'}`
+      });
+      await renderDemoUsers();
+      showMsg($("userMsg"),'Usuário cadastrado com sucesso.');
+    }
+  });
+
+  $("userCancelEdit").onclick=()=>renderDemoUsers();
+
+  document.querySelectorAll('.user-edit').forEach(btn=>btn.onclick=async()=>{
+    let account;
+
+    if(sb){
+      const {data,error}=await sb
+        .from("profiles")
+        .select("id,name,cpf,role,status,auth_email")
+        .eq("id",btn.dataset.id)
+        .single();
+
+      if(error || !data){
+        showMsg($("userMsg"),"Usuário não encontrado.");
+        return;
+      }
+      account=data;
+    }else{
+      account=demoAccounts.find(u=>u.id===btn.dataset.id);
+      if(!account)return;
+    }
+
+    $("editingUserId").value=account.id;
+    $("newUserName").value=account.name || "";
+    $("newUserCpf").value=onlyDigits(account.cpf || "").replace(/(\d{3})(\d{3})(\d{3})(\d{2})/,'$1.$2.$3-$4');
+    $("newUserEmail").value=account.auth_email || "";
+    $("newUserPassword").value=sb ? "" : (account.password || "");
+    $("newUserRole").value=account.role || "operator";
+    $("userSubmit").textContent='Salvar alterações';
+    $("userCancelEdit").classList.remove('hidden');
+    window.scrollTo({top:$('usersPanel').offsetTop-10,behavior:'smooth'});
+  });
+
+  document.querySelectorAll('.user-delete').forEach(btn=>btn.onclick=()=>{
+    if(!isAdminUser())return;
+    const account=demoAccounts.find(u=>u.id===btn.dataset.id);
+    if(!account)return;
+    if(!confirm(`Excluir o usuário ${account.name}?\n\nEssa ação não poderá ser desfeita.`))return;
+
+    const idx=demoAccounts.findIndex(u=>u.id===account.id);
+    if(idx>=0)demoAccounts.splice(idx,1);
+
+    const idx2=demoUsers.findIndex(u=>u.id===account.id);
+    if(idx2>=0)demoUsers.splice(idx2,1);
+
+    demoHistory.push({
+      date:new Date().toLocaleString('pt-BR'),
+      user:currentProfile.cpf,
+      action:'Exclusão de usuário',
+      detail:`${account.name} / ${account.cpf}`
+    });
+
+    renderDemoUsers();
+    showMsg($("userMsg"),'Usuário excluído com sucesso.');
+  });
 }
 async function renderAllActivities(){
   const q=($("activitySearch")?.value||"").toLowerCase().trim();
@@ -826,27 +858,95 @@ function renderHistory(){
     demoHistory.map(h=>`<tr><td>${h.date}</td><td>${h.user}</td><td>${h.action}</td><td>${h.detail}</td></tr>`).join("")
   }</tbody></table>`;
 }
-function generateDemoReport(){
-  const start=$("reportStart").value,end=$("reportEnd").value;
-  const list=typeof activities!=="undefined"?activities.filter(a=>{
-    if(!start && !end)return true;
-    return (!start||a.data>=start)&&(!end||a.data<=end);
-  }):[];
-  const totalKm=list.reduce((s,a)=>{
-    const x=Number(a.kmInicial),y=Number(a.kmFinal);
-    return s+(Number.isFinite(x)&&Number.isFinite(y)&&y>=x?y-x:0);
-  },0);
-  $("reportResult").innerHTML=`<div class="item"><strong>Relatório ARI-CPA7</strong><p>Período: ${start||"início"} a ${end||"fim"}</p><p>Registros: <strong>${list.length}</strong></p><p>KM apurados: <strong>${totalKm}</strong></p><p class="ari-muted">Na versão conectada ao banco, este relatório será gerado com todos os registros autorizados.</p></div>`;
-  $("printReport").disabled=false;
+async function renderMonthlyReport(){
+  const box=$("reportResult");
+  if(!box) return;
+  box.innerHTML='<div class="empty">Carregando relatório mensal...</div>';
+
+  let rows=[];
+  if(sb){
+    const {data,error}=await sb
+      .from("activities")
+      .select("id,owner_id,saida_data,saida_hora,viatura,km_inicial,km_final,profiles(name,cpf)")
+      .order("saida_data",{ascending:false})
+      .order("saida_hora",{ascending:false});
+    if(error){
+      console.error("ARI-CPA7: erro no relatório mensal",error);
+      box.innerHTML=`<div class="empty">Não foi possível carregar o relatório mensal.<br><small>${escHtml(error.message||"Erro de autorização")}</small></div>`;
+      return;
+    }
+    rows=(data||[]).map(a=>({
+      ...a,
+      ownerName:a.profiles?.name||a.owner_id||"—",
+      ownerCpf:a.profiles?.cpf||"—"
+    }));
+  }else{
+    rows=[...window.ariDemoActivities].map(a=>({
+      ...a,ownerName:a.ownerName||a.owner||"—",ownerCpf:a.ownerCpf||a.owner||"—",
+      saida_data:a.data,saida_hora:a.hora,km_inicial:a.kmInicial,km_final:a.kmFinal
+    }));
+  }
+
+  if(!rows.length){
+    box.innerHTML='<div class="empty">Nenhum lançamento registrado.</div>';
+    return;
+  }
+
+  const months={};
+  for(const a of rows){
+    const month=String(a.saida_data||"").slice(0,7)||"Sem data";
+    if(!months[month]) months[month]={actions:0,km:0,chiefs:{}};
+    const m=months[month];
+    const owner=a.owner_id||a.ownerCpf||a.ownerName||"sem-identificação";
+    if(!m.chiefs[owner]) m.chiefs[owner]={name:a.ownerName||"—",cpf:a.ownerCpf||"—",actions:0,km:0};
+    const c=m.chiefs[owner];
+    const kmI=Number(a.km_inicial), kmF=Number(a.km_final);
+    const km=Number.isFinite(kmI)&&Number.isFinite(kmF)&&kmF>=kmI ? kmF-kmI : 0;
+    m.actions++; m.km+=km; c.actions++; c.km+=km;
+  }
+
+  const monthKeys=Object.keys(months).sort().reverse();
+  const monthName=k=>{
+    if(!/^\d{4}-\d{2}$/.test(k)) return k;
+    const [y,m]=k.split("-").map(Number);
+    return new Date(y,m-1,1).toLocaleDateString("pt-BR",{month:"long",year:"numeric"});
+  };
+
+  box.innerHTML=monthKeys.map(k=>{
+    const m=months[k];
+    const chiefs=Object.values(m.chiefs).sort((a,b)=>b.actions-a.actions||b.km-a.km||a.name.localeCompare(b.name));
+    return `<section class="item monthly-report-block">
+      <div class="item-head"><strong style="text-transform:capitalize">${escHtml(monthName(k))}</strong><strong>${m.actions} ações | ${m.km} KM</strong></div>
+      <div class="table-scroll"><table class="admin-table"><thead><tr><th>Chefe de Equipe</th><th>CPF</th><th>Ações</th><th>KM</th></tr></thead><tbody>
+      ${chiefs.map(c=>`<tr><td>${escHtml(c.name)}</td><td>${escHtml(c.cpf)}</td><td>${c.actions}</td><td>${c.km}</td></tr>`).join("")}
+      </tbody></table></div>
+    </section>`;
+  }).join("");
+
+  const printBtn=$("printReport");
+  if(printBtn) printBtn.disabled=false;
 }
-document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",()=>{
+
+async function printMonthlyReport(){
+  await renderMonthlyReport();
+  window.print();
+}
+
+function generateDemoReport(){ return renderMonthlyReport(); }
+
+function bindOptional(id,event,handler){
+  const el=$(id); if(el) el.addEventListener(event,handler);
+}
+
+document.querySelectorAll(".adminBtn").forEach(btn=>btn.addEventListener("click",async()=>{
   showAdminPanel(btn.dataset.panel);
-  if(btn.dataset.panel==="usersPanel")renderDemoUsers();
-  if(btn.dataset.panel==="activitiesPanel")renderAllActivities();
-  if(btn.dataset.panel==="historyPanel")renderHistory();
-  if(btn.dataset.panel==="vehiclesPanel")renderDemoVehicles();
+  if(btn.dataset.panel==="usersPanel") await renderDemoUsers();
+  if(btn.dataset.panel==="activitiesPanel") await renderAllActivities();
+  if(btn.dataset.panel==="historyPanel") renderHistory();
+  if(btn.dataset.panel==="vehiclesPanel") renderDemoVehicles();
+  if(btn.dataset.panel==="reportsPanel") await renderMonthlyReport();
 }));
 document.querySelectorAll(".backAdmin").forEach(btn=>btn.addEventListener("click",hideAdminPanels));
-$("activitySearchBtn").addEventListener("click",renderAllActivities);
-$("generateReport").addEventListener("click",generateDemoReport);
-$("printReport").addEventListener("click",()=>window.print());
+bindOptional("activitySearchBtn","click",renderAllActivities);
+bindOptional("generateReport","click",renderMonthlyReport);
+bindOptional("printReport","click",printMonthlyReport);
