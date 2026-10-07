@@ -176,14 +176,46 @@ async function logout(){
 $("logoutOperator").onclick=logout;$("logoutAdmin").onclick=logout;
 
 async function loadActivities(){
-  const {data,error}=await sb.from("activities").select("*").order("saida_data",{ascending:false}).order("saida_hora",{ascending:false});
-  const box=$("activityList"); box.innerHTML="";
-  if(error){box.textContent="Não foi possível carregar as atividades.";return}
-  if(!data.length){box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';return}
+  if(!sb || !currentProfile?.id) return;
+
+  // O chefe de equipe deve enxergar somente os próprios lançamentos,
+  // para poder reabrir e editar qualquer atividade que já lançou.
+  const {data,error}=await sb
+    .from("activities")
+    .select("*")
+    .eq("owner_id",currentProfile.id)
+    .order("saida_data",{ascending:false})
+    .order("saida_hora",{ascending:false});
+
+  const box=$("activityList") || $("myActivities");
+  if(!box) return;
+  box.innerHTML="";
+
+  if(error){
+    console.error("ARI-CPA7: erro ao carregar minhas atividades",error);
+    box.innerHTML='<p class="muted">Não foi possível carregar suas atividades.</p>';
+    return;
+  }
+
+  if(!data || !data.length){
+    box.innerHTML='<p class="muted">Nenhuma atividade lançada. Toque em “+ Nova atividade” para começar.</p>';
+    return;
+  }
+
   data.forEach(a=>{
-    const el=document.createElement("article");el.className="item";
-    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>Destino: ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
-    el.querySelector("button").onclick=()=>editActivity(a);box.appendChild(el);
+    const el=document.createElement("article");
+    el.className="item";
+    const complete=!!(a.retorno_data && a.retorno_hora && a.km_final!==null && a.km_final!==undefined);
+    el.innerHTML=`
+      <div class="item-head">
+        <strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong>
+        <button class="secondary" data-id="${a.id}">Editar</button>
+      </div>
+      <div>${a.saida_local||"—"} → ${a.destino||"—"}</div>
+      <small>Saída: ${a.saida_hora||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>
+      <div class="edit-note ${complete?'complete':'pending'}">${complete?'Retorno registrado':'Aguardando retorno'}</div>`;
+    el.querySelector("button").onclick=()=>editActivity(a);
+    box.appendChild(el);
   });
 }
 
