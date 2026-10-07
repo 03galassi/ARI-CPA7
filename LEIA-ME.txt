@@ -1,9 +1,22 @@
-ARI-CPA7 - CORREÇÃO 07/10/2026
+ARI-CPA7 — CORREÇÃO DE LOGIN E E-MAIL
 
-1) Substitua o app.js atual do GitHub por este app.js.
-2) O erro do console "Cannot set properties of null (setting 'innerHTML')" foi corrigido.
-3) O carregamento das atividades agora funciona com #activityList ou #myActivities.
-4) Depois do upload, faça Ctrl+Shift+R.
-5) Se o index.html carregar app.js com ?v=20261006-1630, altere para ?v=20261007-0845 para forçar o navegador a usar este arquivo.
+Corrige:
+1. Cadastro real de Administrador/Chefe de Equipe agora chama a Edge Function admin-users.
+2. O cadastro agora exige E-mail.
+3. O e-mail é salvo em profiles.auth_email e usado para o login por CPF.
+4. "Esqueci minha senha" passa a localizar o e-mail do CPF.
+5. Usuários antigos podem receber e-mail pelo botão Editar.
+6. O perfil "Agente de Campo" passa a aparecer como "Chefe de Equipe".
+7. Exclusão e edição de usuários reais também usam a Edge Function segura.
+8. O carregamento das atividades do Chefe de Equipe fica filtrado pelo usuário logado.
 
-Não altere as chaves do Supabase.
+INSTALAÇÃO:
+- Substitua o app.js do GitHub por este arquivo.
+- No index.html, altere a versão do app.js para evitar cache, por exemplo: app.js?v=20261007-1000
+- Faça Commit Changes.
+- Depois abra o site e pressione Ctrl+Shift+R.
+
+IMPORTANTE:
+- A Edge Function admin-users existente já aceita email e não precisa ser substituída.
+- Não coloque service_role no GitHub.
+- Usuários antigos sem e-mail devem ser editados no painel para informar o e-mail.
