@@ -178,42 +178,30 @@ $("logoutOperator").onclick=logout;$("logoutAdmin").onclick=logout;
 async function loadActivities(){
   if(!sb || !currentProfile?.id) return;
 
-  // O chefe de equipe deve enxergar somente os próprios lançamentos,
-  // para poder reabrir e editar qualquer atividade que já lançou.
-  const {data,error}=await sb
-    .from("activities")
+  // O chefe de equipe deve enxergar e editar somente os próprios lançamentos.
+  // O ID do usuário autenticado é a referência segura do proprietário.
+  const {data,error}=await sb.from("activities")
     .select("*")
-    .eq("owner_id",currentProfile.id)
+    .eq("owner_id", currentProfile.id)
     .order("saida_data",{ascending:false})
     .order("saida_hora",{ascending:false});
 
   const box=$("activityList") || $("myActivities");
   if(!box) return;
   box.innerHTML="";
-
   if(error){
-    console.error("ARI-CPA7: erro ao carregar minhas atividades",error);
-    box.innerHTML='<p class="muted">Não foi possível carregar suas atividades.</p>';
+    console.error("ARI-CPA7: erro ao carregar atividades do chefe", error);
+    box.textContent="Não foi possível carregar suas atividades.";
     return;
   }
-
   if(!data || !data.length){
-    box.innerHTML='<p class="muted">Nenhuma atividade lançada. Toque em “+ Nova atividade” para começar.</p>';
+    box.innerHTML='<p class="muted">Nenhuma atividade cadastrada.</p>';
     return;
   }
-
   data.forEach(a=>{
     const el=document.createElement("article");
     el.className="item";
-    const complete=!!(a.retorno_data && a.retorno_hora && a.km_final!==null && a.km_final!==undefined);
-    el.innerHTML=`
-      <div class="item-head">
-        <strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong>
-        <button class="secondary" data-id="${a.id}">Editar</button>
-      </div>
-      <div>${a.saida_local||"—"} → ${a.destino||"—"}</div>
-      <small>Saída: ${a.saida_hora||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>
-      <div class="edit-note ${complete?'complete':'pending'}">${complete?'Retorno registrado':'Aguardando retorno'}</div>`;
+    el.innerHTML=`<div class="item-head"><strong>${a.saida_data||"—"} — ${a.viatura||"—"}</strong><button class="secondary" data-id="${a.id}">Editar</button></div><small>${a.saida_local||"—"} → ${a.destino||"—"} | KM: ${a.km_inicial??"—"} → ${a.km_final??"—"}</small>`;
     el.querySelector("button").onclick=()=>editActivity(a);
     box.appendChild(el);
   });
@@ -353,10 +341,16 @@ $("activityForm").addEventListener("submit",async e=>{
 
   let result;
   if(id){
-    result = await sb.from("activities").update(payload).eq("id",id);
+    // Só permite ao chefe alterar um lançamento que pertença a ele.
+    result = await sb.from("activities")
+      .update(payload)
+      .eq("id",id)
+      .eq("owner_id",currentProfile.id);
   }else{
-    // owner_id é definido pelo trigger/RLS do banco a partir do usuário autenticado.
-    result = await sb.from("activities").insert(payload);
+    // Gravamos explicitamente o proprietário. Isso garante que o lançamento
+    // permaneça vinculado ao chefe mesmo após sair e entrar novamente.
+    result = await sb.from("activities")
+      .insert({...payload, owner_id:currentProfile.id});
   }
 
   if(result.error){
