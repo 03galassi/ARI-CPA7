@@ -59,6 +59,12 @@ async function emailForCpf(cpf){
 }
 function showMsg(el,text){el.textContent=text;el.classList.remove("hidden");}
 function hideMsg(el){el.classList.add("hidden");}
+function operatorTeamLabel(location){
+  const value=String(location||"").trim();
+  if(/bonito/i.test(value)) return "ALI - Bonito - MS";
+  if(/jardim/i.test(value)) return "ALI - Jardim - MS";
+  return "Equipe não definida";
+}
 
 $("cpf").addEventListener("input",e=>{
   let v=onlyDigits(e.target.value).slice(0,11);
@@ -74,7 +80,7 @@ $("loginForm").addEventListener("submit", async e=>{
   if(!sb){
     const account=demoAccounts.find(a=>a.cpf===cpf && a.password===password && a.status==='ativo');
     if(account){
-      currentProfile={id:account.id,name:account.name,cpf:account.cpf,role:account.role,status:account.status};
+      currentProfile={id:account.id,name:account.name,cpf:account.cpf,role:account.role,status:account.status,location:account.location||""};
       loginView.classList.add('hidden');
       if(account.role==='admin'){
         adminView.classList.remove('hidden');
@@ -82,7 +88,7 @@ $("loginForm").addEventListener("submit", async e=>{
         renderAdminHomeActivities();
       }else{
         operatorView.classList.remove('hidden');
-        $("operatorName").textContent=`Usuário: ${account.name} | CPF: ${account.cpf}`;
+        $("operatorName").textContent=operatorTeamLabel(account.location);
         loadDemoOperatorActivitiesFor(account.cpf);
       }
       return;
@@ -101,7 +107,7 @@ async function loadProfile(uid){
   const {data,error}=await sb.from("profiles").select("*").eq("id",uid).single();
   if(error || !data || data.status!=="ativo"){await sb.auth.signOut();showMsg($("loginMsg"),"Usuário sem autorização de acesso.");return}
   currentProfile=data; loginView.classList.add("hidden");
-  if(data.role==="admin"){adminView.classList.remove("hidden");renderAdminHomeActivities()}else{operatorView.classList.remove("hidden");$("operatorName").textContent=data.name;await loadActivities()}
+  if(data.role==="admin"){adminView.classList.remove("hidden");renderAdminHomeActivities()}else{operatorView.classList.remove("hidden");$("operatorName").textContent=operatorTeamLabel(data.location);await loadActivities()}
 }
 
 $("forgotBtn").addEventListener("click",async()=>{
@@ -553,16 +559,6 @@ async function renderDemoUsers(){
           <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
         </div>
       </form>
-      <section class="card" style="margin-top:18px;padding:16px;">
-        <h3>Gerenciar equipes</h3>
-        <p class="muted">Cadastre novas equipes. Elas passarão a aparecer na lista de equipes do cadastro de usuários.</p>
-        <form id="teamForm" class="grid">
-          <div><label for="newTeamName">Nome da nova equipe</label><input id="newTeamName" maxlength="100" placeholder="Ex.: ALI outra cidade - MS" required></div>
-          <div class="actions"><button class="primary" id="teamSubmit" type="submit">Cadastrar equipe</button></div>
-        </form>
-        <p id="teamMsg" class="msg hidden"></p>
-        <div id="teamsList" class="table-scroll"><div class="empty">Carregando equipes...</div></div>
-      </section>
       <p id="userMsg" class="msg hidden"></p>
       <h3>Usuários cadastrados</h3>
       <div id="usersTableBox" class="table-scroll"><div class="empty">Carregando usuários...</div></div>
@@ -608,17 +604,21 @@ async function renderDemoUsers(){
     }
 
     async function loadTeams(){
+      const select=$("newUserLocation");
+      const previous=select.value;
       const {data,error}=await sb.from("teams").select("id,name,active").eq("active",true).order("name",{ascending:true});
       if(error){
         console.error("ARI-CPA7 loadTeams:",error);
-        showMsg($("teamMsg"),"Não foi possível carregar as equipes. Execute o arquivo migration_equipes.sql no SQL Editor do Supabase.");
+        select.innerHTML='<option value="ALI Jardim - MS">ALI Jardim - MS</option><option value="ALI Bonito - MS">ALI Bonito - MS</option>';
+        if(previous) select.value=previous;
         return;
       }
-      const select=$("newUserLocation");
-      const previous=select.value;
-      select.innerHTML=(data||[]).map(t=>`<option value="${escHtml(t.name)}">${escHtml(t.name)}</option>`).join("");
-      if(previous && (data||[]).some(t=>t.name===previous)) select.value=previous;
-      $("teamsList").innerHTML=(data||[]).length?`<table class="admin-table"><thead><tr><th>Equipe</th><th>Status</th></tr></thead><tbody>${data.map(t=>`<tr><td>${escHtml(t.name)}</td><td>Ativa</td></tr>`).join("")}</tbody></table>`:'<div class="empty">Nenhuma equipe cadastrada.</div>';
+      const names=(data||[]).map(t=>t.name);
+      if(!names.includes("ALI Jardim - MS")) names.push("ALI Jardim - MS");
+      if(!names.includes("ALI Bonito - MS")) names.push("ALI Bonito - MS");
+      names.sort((a,b)=>a.localeCompare(b,"pt-BR"));
+      select.innerHTML=names.map(name=>`<option value="${escHtml(name)}">${escHtml(name)}</option>`).join("");
+      if(previous && names.includes(previous)) select.value=previous;
     }
 
     async function saveProfileLocation(userId, locationName){
@@ -626,21 +626,6 @@ async function renderDemoUsers(){
       if(error) throw new Error("Usuário salvo, mas não foi possível gravar a equipe: "+error.message+". Execute migration_equipes.sql no Supabase.");
       if(data===false) throw new Error("Usuário salvo, mas o banco recusou a gravação da equipe. Verifique se sua conta possui perfil de administrador ativo.");
     }
-
-    $("teamForm").addEventListener("submit",async e=>{
-      e.preventDefault(); hideMsg($("teamMsg"));
-      const name=$("newTeamName").value.trim();
-      if(!name){showMsg($("teamMsg"),"Informe o nome da equipe.");return;}
-      try{
-        $("teamSubmit").disabled=true;
-        const {error}=await sb.from("teams").insert({name,active:true});
-        if(error) throw error;
-        $("newTeamName").value="";
-        showMsg($("teamMsg"),"Equipe cadastrada com sucesso.");
-        await loadTeams();
-      }catch(err){showMsg($("teamMsg"),/duplicate|unique/i.test(err.message||"")?"Essa equipe já está cadastrada.":(err.message||"Não foi possível cadastrar a equipe."));}
-      finally{$("teamSubmit").disabled=false;}
-    });
 
     async function loadRealUsers(){
       // Compatibilidade com bancos que ainda não receberam a coluna location.

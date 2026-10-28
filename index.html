@@ -15,7 +15,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="ARI-CPA7">
 
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20261028-2">
 </head>
 <body>
   <main class="app">
@@ -52,8 +52,8 @@
       <p id="resetMsg" class="msg hidden" aria-live="polite"></p>
     </section>
     <section id="operatorView" class="hidden">
-      <header class="topbar card">
-        <div><strong>ARI-CPA7</strong><span id="operatorName"></span></div>
+      <header class="topbar card operator-topbar">
+        <div class="operator-brand"><strong id="operatorName"></strong></div>
         <button id="logoutOperator" class="secondary">Sair</button>
       </header>
       <section class="card field-home">
@@ -101,7 +101,7 @@
       </section>
     </section>
     <section id="adminView" class="hidden">
-      <header class="topbar card">
+      <header class="topbar card admin-topbar">
         <div><strong>ARI-CPA7</strong><span>Painel do Administrador</span></div>
         <button id="logoutAdmin" class="secondary">Sair</button>
       </header>
@@ -156,6 +156,6 @@
   </main>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-  <script src="app.js?v=20261028-1530"></script>
+  <script src="app.js?v=20261028-2"></script>
 </body>
 </html>

@@ -57,3 +57,36 @@ select#saidaLocal, select#destino, select#retornoLocal { max-height: 220px; }
 
 .admin-home-reports{margin-top:16px}.admin-home-reports .section-head{align-items:center}.admin-home-reports .admin-table{min-width:850px}
 .actions-cell{white-space:nowrap}.actions-cell button{margin-right:6px}.danger{background:#b91c1c;color:#fff;border:1px solid #b91c1c;border-radius:8px;padding:9px 12px;cursor:pointer}.danger:hover{background:#991b1b}.muted{color:var(--muted);font-size:12px}.hidden{display:none!important}
+
+/* Ajustes de interface ARI-CPA7 — versão 20261028-2 */
+.admin-topbar{position:relative;display:flex;justify-content:center;align-items:center;min-height:112px;text-align:center}
+.admin-topbar>div{flex:1;text-align:center;padding:0 80px}
+.admin-topbar strong{font-size:34px!important;line-height:1.15;letter-spacing:.05em}
+.admin-topbar span{font-size:20px!important;color:var(--text);font-weight:700;margin-top:7px}
+.admin-topbar #logoutAdmin{position:absolute;right:22px;top:50%;transform:translateY(-50%)}
+.operator-topbar{justify-content:space-between;min-height:82px}
+.operator-topbar .operator-brand{flex:1;text-align:center}
+.operator-topbar #operatorName{display:block;font-size:29px;line-height:1.2;color:var(--text);letter-spacing:.02em;font-weight:800}
+#newUserLocation,#newUserRole{min-height:64px;padding:18px 18px;font-size:19px;font-weight:600;border:2px solid var(--border);border-radius:12px;background:#fff;color:var(--text);width:100%;cursor:pointer}
+#newUserLocation:focus,#newUserRole:focus{outline:3px solid #93c5fd;border-color:var(--accent)}
+@media(max-width:620px){
+ .admin-topbar{min-height:100px}
+ .admin-topbar>div{padding:0 54px 0 8px}
+ .admin-topbar strong{font-size:27px!important}
+ .admin-topbar span{font-size:16px!important}
+ .admin-topbar #logoutAdmin{right:8px;padding:8px 10px}
+ .operator-topbar #operatorName{font-size:23px}
+ #newUserLocation,#newUserRole{min-height:60px;font-size:18px}
+}
+@media print{
+ @page{size:auto;margin:12mm}
+ html,body{background:#fff!important;margin:0!important;padding:0!important;width:100%!important}
+ body *{visibility:hidden!important}
+ #adminView,#reportsPanel,#reportResult{display:block!important;visibility:visible!important;position:static!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important;background:#fff!important}
+ #adminView *,#reportsPanel *{visibility:hidden!important}
+ #reportResult{visibility:visible!important;position:static!important;display:block!important}
+ #reportResult *{visibility:visible!important}
+ #ariProductionReport{visibility:visible!important;display:block!important;position:absolute!important;left:0!important;top:0!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;box-shadow:none!important;background:#fff!important;color:#000!important}
+ #ariProductionReport *{visibility:visible!important}
+ #reportsPanel>.section-head,#reportsPanel>.report-box,#printReport,#generateReport{display:none!important;visibility:hidden!important}
+}
