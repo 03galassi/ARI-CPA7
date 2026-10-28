@@ -856,7 +856,7 @@ async function renderAllActivities(){
   });
 
   if(!rows.length){
-    $("allActivitiesContent").innerHTML='<div class="empty">Nenhum relatório lançado pela equipe de campo.</div>';
+    $("allActivitiesContent").innerHTML='<div class="empty">Nenhuma atividade encontrada no período. O cadastro do agente, sozinho, não gera relatório; a equipe precisa salvar uma atividade.</div>';
     return;
   }
 
@@ -883,12 +883,12 @@ async function renderAdminHomeActivities(){
       .order("saida_data",{ascending:false})
       .order("saida_hora",{ascending:false});
     if(error){$("adminHomeActivities").innerHTML='<div class="empty">Não foi possível carregar os relatórios.</div>';return;}
-    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.name||"—",ownerCpf:a.profiles?.cpf||"—"}));
+    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.location||"Equipe não definida",ownerCpf:""}));
   }else{
     rows=[...window.ariDemoActivities].sort((a,b)=>`${b.data||""} ${b.hora||""}`.localeCompare(`${a.data||""} ${a.hora||""}`));
   }
-  if(!rows.length){$("adminHomeActivities").innerHTML='<div class="empty">Nenhum relatório lançado pela equipe de campo.</div>';return;}
-  $("adminHomeActivities").innerHTML=`<div class="report-count"><strong>${rows.length}</strong> relatório(s) encontrado(s).</div><div class="table-scroll"><table class="admin-table"><thead><tr><th>Data/hora</th><th>Equipe</th><th>Saída</th><th>Destino</th><th>Viatura</th><th>KM</th><th>Retorno</th></tr></thead><tbody>${rows.map(a=>`<tr><td>${a.saida_data||a.data||"—"} ${a.saida_hora||a.hora||""}</td><td>${a.ownerName||a.owner||"—"}<br><small>${a.ownerCpf||a.owner||""}</small></td><td>${a.saida_local||a.saidaLocal||"—"}</td><td>${a.destino||"—"}</td><td><strong>${a.viatura||"—"}</strong></td><td>${a.km_inicial??a.kmInicial??"—"} → ${a.km_final??a.kmFinal??"—"}</td><td>${a.retorno_local||a.retornoLocal||"—"}</td></tr>`).join("")}</tbody></table></div>`;
+  if(!rows.length){$("adminHomeActivities").innerHTML='<div class="empty">Nenhuma atividade registrada ainda. O relatório aparecerá aqui depois que um agente entrar no sistema e salvar uma atividade.</div>';return;}
+  $("adminHomeActivities").innerHTML=`<div class="report-count"><strong>${rows.length}</strong> relatório(s) encontrado(s).</div><div class="table-scroll"><table class="admin-table"><thead><tr><th>Data/hora</th><th>Equipe</th><th>Saída</th><th>Destino</th><th>Viatura</th><th>KM</th><th>Retorno</th></tr></thead><tbody>${rows.map(a=>`<tr><td>${a.saida_data||a.data||"—"} ${a.saida_hora||a.hora||""}</td><td>${a.ownerName||a.profiles?.location||"Equipe não definida"}</td><td>${a.saida_local||a.saidaLocal||"—"}</td><td>${a.destino||"—"}</td><td><strong>${a.viatura||"—"}</strong></td><td>${a.km_inicial??a.kmInicial??"—"} → ${a.km_final??a.kmFinal??"—"}</td><td>${a.retorno_local||a.retornoLocal||"—"}</td></tr>`).join("")}</tbody></table></div>`;
   document.querySelectorAll("#adminHomeActivities tbody tr").forEach((tr,i)=>{tr.style.cursor="pointer";tr.title="Clique para abrir o relatório em PDF";tr.addEventListener("click",()=>openActivityPdf(rows[i]));});
 }
 function renderHistory(){
@@ -919,12 +919,12 @@ async function generateDemoReport(){
       $("printReport").disabled=true;
       return;
     }
-    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.name||"—",ownerCpf:a.profiles?.cpf||"—"}));
+    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.location||"Equipe não definida",ownerCpf:""}));
   }else{
     rows=[...window.ariDemoActivities].filter(a=>{
       const d=a.data||"";
       return (!start||d>=start)&&(!end||d<=end);
-    }).map(a=>({...a,ownerName:a.ownerName||a.owner||"—",ownerCpf:a.ownerCpf||"—",saida_data:a.data,saida_hora:a.hora,saida_local:a.saidaLocal,km_inicial:a.kmInicial,km_final:a.kmFinal,retorno_local:a.retornoLocal}));
+    }).map(a=>({...a,ownerName:a.ownerName||a.localEquipe||"Equipe não definida",ownerCpf:"",saida_data:a.data,saida_hora:a.hora,saida_local:a.saidaLocal,km_inicial:a.kmInicial,km_final:a.kmFinal,retorno_local:a.retornoLocal}));
   }
 
   const kmOf=a=>{
@@ -943,8 +943,8 @@ async function generateDemoReport(){
 
   const chiefGroups={};
   rows.forEach(a=>{
-    const key=a.ownerCpf||a.ownerName||"—";
-    if(!chiefGroups[key]) chiefGroups[key]={name:a.ownerName||"—",cpf:a.ownerCpf||"—",count:0,km:0,cities:new Set()};
+    const key=a.ownerName||"Equipe não definida";
+    if(!chiefGroups[key]) chiefGroups[key]={name:key,count:0,km:0,cities:new Set()};
     chiefGroups[key].count++;
     chiefGroups[key].km+=kmOf(a);
     const o=a.saida_local||a.saidaLocal;
@@ -960,7 +960,6 @@ async function generateDemoReport(){
   const chiefHtml=chiefList.map(g=>`
     <div style="border:1px solid #d7dee8;border-radius:12px;padding:12px 14px;margin:0 0 10px;background:#fff;break-inside:avoid;">
       <div style="font-weight:700;font-size:15px;">${esc(g.name)}</div>
-      <div style="font-size:11px;color:#667085;margin-top:2px;">CPF: ${esc(g.cpf)}</div>
       <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:9px;font-size:12px;">
         <span><strong>${g.count}</strong> ações</span>
         <span><strong>${g.km}</strong> km</span>
@@ -980,7 +979,7 @@ async function generateDemoReport(){
       <div style="border:1px solid #cfd7e3;border-radius:12px;padding:15px;margin:0 0 14px;background:#fff;break-inside:avoid;">
         <div style="font-size:15px;font-weight:800;margin-bottom:9px;">AÇÃO ${String(i+1).padStart(2,'0')} — ${esc(date)} às ${esc(hour)}</div>
         <div style="font-size:12px;line-height:1.7;">
-          <div><strong>Chefe de Equipe:</strong> ${esc(a.ownerName||'—')}</div>
+          <div><strong>Equipe:</strong> ${esc(a.ownerName||'Equipe não definida')}</div>
           <div><strong>Origem:</strong> ${esc(origem)} &nbsp;&nbsp; <strong>Destino:</strong> ${esc(a.destino||'—')}</div>
           <div><strong>Viatura:</strong> ${esc(a.viatura||'—')} &nbsp;&nbsp; <strong>KM:</strong> ${esc(ini)} → ${esc(fim)} &nbsp;&nbsp; <strong>Percorridos:</strong> ${km} km</div>
           <div><strong>Retorno:</strong> ${esc(retorno)}</div>
