@@ -598,12 +598,24 @@ async function renderDemoUsers(){
     }
 
     async function loadRealUsers(){
-      const {data, error} = await sb
+      // Compatibilidade com bancos que ainda não receberam a coluna location.
+      // Assim, a falta da migração não impede o administrador de ver os agentes existentes.
+      let {data, error} = await sb
         .from("profiles")
         .select("id,name,cpf,auth_email,role,status,location")
         .order("name", {ascending:true});
 
+      if(error && /location|column|schema cache|does not exist/i.test(error.message || "")){
+        const fallback = await sb
+          .from("profiles")
+          .select("id,name,cpf,auth_email,role,status")
+          .order("name", {ascending:true});
+        data = (fallback.data || []).map(u => ({...u, location: ""}));
+        error = fallback.error;
+      }
+
       if(error){
+        console.error("ARI-CPA7 loadRealUsers:", error);
         $("usersTableBox").innerHTML =
           `<div class="empty">Não foi possível carregar os usuários: ${escHtml(error.message)}</div>`;
         return;
