@@ -67,7 +67,7 @@ select#saidaLocal, select#destino, select#retornoLocal { max-height: 220px; }
 .operator-topbar{justify-content:space-between;min-height:82px}
 .operator-topbar .operator-brand{flex:1;text-align:center}
 .operator-topbar #operatorName{display:block;font-size:29px;line-height:1.2;color:var(--text);letter-spacing:.02em;font-weight:800}
-#newUserLocation,#newUserRole{min-height:64px;padding:18px 18px;font-size:19px;font-weight:600;border:2px solid var(--border);border-radius:12px;background:#fff;color:var(--text);width:100%;cursor:pointer}
+#newUserLocation,#newUserRole{height:44px;min-height:44px;padding:12px;font-size:16px;font-weight:400;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--text);width:100%;cursor:pointer;box-sizing:border-box}
 #newUserLocation:focus,#newUserRole:focus{outline:3px solid #93c5fd;border-color:var(--accent)}
 @media(max-width:620px){
  .admin-topbar{min-height:100px}
@@ -76,7 +76,7 @@ select#saidaLocal, select#destino, select#retornoLocal { max-height: 220px; }
  .admin-topbar span{font-size:16px!important}
  .admin-topbar #logoutAdmin{right:8px;padding:8px 10px}
  .operator-topbar #operatorName{font-size:23px}
- #newUserLocation,#newUserRole{min-height:60px;font-size:18px}
+ #newUserLocation,#newUserRole{height:44px;min-height:44px;padding:12px;font-size:16px}
 }
 @media print{
  @page{size:auto;margin:12mm}
