@@ -299,7 +299,7 @@ $("activityForm").addEventListener("submit",async e=>{
     const demoPayload = {
       id: id || crypto.randomUUID(),
       owner: currentProfile.cpf,
-      ownerName: currentProfile.name,
+      ownerName: currentProfile.location || "—",
       saidaLocal: payload.saida_local,
       data: payload.saida_data,
       hora: payload.saida_hora,
@@ -435,8 +435,8 @@ function openActivityPdf(a){
   const outHour=a.hora||a.saidaHora||a.saida_hora||"—";
   const retDate=a.retornoData||a.retorno_data||"—";
   const retHour=a.retornoHora||a.retorno_hora||"—";
-  const operator=a.ownerName||a.operador||a.owner||"—";
-  const cpf=a.ownerCpf||a.cpf||"—";
+  const operator=a.ownerName||a.localEquipe||a.operador||"—";
+  const cpf="";
   const origem=a.saidaLocal||a.saida_local||"—";
   const destino=a.destino||"—";
   const viatura=a.viatura||"—";
@@ -478,7 +478,7 @@ function openActivityPdf(a){
     y+=4;
   };
 
-  inlineLine([["Agente de Inteligência",operator],["CPF",cpf]]);
+  inlineLine([["Local / Equipe",operator]]);
   inlineLine([["Cidade de Origem",`${origem} - MS`],["Cidade de Destino",`${destino} - MS`],["Viatura",viatura]]);
   inlineLine([["Data de saída",fmtDate(outDate)],["Hora de Saída",fmtHour(outHour)]]);
   inlineLine([["KM inicial",kmI],["KM final",kmF],["KM percorridos",kmPerc]]);
@@ -533,7 +533,12 @@ async function renderDemoUsers(){
       <form id="userForm" class="grid admin-user-form">
         <input type="hidden" id="editingUserId" value="">
         <div><label>Nome completo</label><input id="newUserName" required></div>
-        <div><label>Codinome</label><input id="newUserCodinome" maxlength="80" placeholder="Codinome que aparecerá nos relatórios"></div>
+        <div><label>Local / Equipe</label>
+          <select id="newUserLocation" required>
+            <option value="ALI Jardim - MS">ALI Jardim - MS</option>
+            <option value="ALI Bonito - MS">ALI Bonito - MS</option>
+          </select>
+        </div>
         <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
         <div><label>E-mail</label><input id="newUserEmail" type="email" autocomplete="email" required placeholder="usuario@exemplo.com"></div>
         <div><label>Senha</label><input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" autocomplete="new-password" placeholder="6 dígitos"></div>
@@ -595,7 +600,7 @@ async function renderDemoUsers(){
     async function loadRealUsers(){
       const {data, error} = await sb
         .from("profiles")
-        .select("id,name,codinome,cpf,auth_email,role,status")
+        .select("id,name,cpf,auth_email,role,status,location")
         .order("name", {ascending:true});
 
       if(error){
@@ -607,7 +612,7 @@ async function renderDemoUsers(){
       const rows = (data || []).map(u => `
         <tr>
           <td>${escHtml(u.name)}</td>
-          <td>${escHtml(u.codinome || "—")}</td>
+          <td>${escHtml(u.location || "—")}</td>
           <td>${escHtml(u.cpf)}</td>
           <td>${escHtml(u.auth_email || "—")}</td>
           <td>${u.role === "admin" ? "Administrador" : "Agente de Campo"}</td>
@@ -626,7 +631,7 @@ async function renderDemoUsers(){
           <thead>
             <tr>
               <th>Nome</th>
-              <th>Codinome</th>
+              <th>Local / Equipe</th>
               <th>CPF</th>
               <th>E-mail</th>
               <th>Perfil</th>
@@ -634,7 +639,7 @@ async function renderDemoUsers(){
               <th>Ações</th>
             </tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="7">Nenhum usuário cadastrado.</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="6">Nenhum usuário cadastrado.</td></tr>`}</tbody>
         </table>
       `;
 
@@ -644,7 +649,7 @@ async function renderDemoUsers(){
 
         $("editingUserId").value = user.id;
         $("newUserName").value = user.name || "";
-        $("newUserCodinome").value = user.codinome || "";
+        $("newUserLocation").value = user.location || "ALI Jardim - MS";
         $("newUserCpf").value = onlyDigits(user.cpf || "").replace(
           /(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4"
         );
@@ -680,7 +685,6 @@ async function renderDemoUsers(){
 
       const editingId = $("editingUserId").value;
       const name = $("newUserName").value.trim();
-      const codinome = $("newUserCodinome").value.trim();
       const cpf = onlyDigits($("newUserCpf").value);
       const email = $("newUserEmail").value.trim();
       const password = $("newUserPassword").value;
@@ -714,10 +718,10 @@ async function renderDemoUsers(){
           const payload = {
             user_id: editingId,
             name,
-            codinome,
             cpf,
             email,
             role,
+            location: $("newUserLocation").value,
             status: "ativo"
           };
           if(password) payload.password = password;
@@ -727,11 +731,11 @@ async function renderDemoUsers(){
         }else{
           await callAdminUsers("create", {
             name,
-            codinome,
             cpf,
             email,
             password,
-            role
+            role,
+            location: $("newUserLocation").value
           });
           showMsg($("userMsg"), "Usuário cadastrado com sucesso.");
         }
@@ -783,6 +787,12 @@ async function renderDemoUsers(){
     <form id="userForm" class="grid admin-user-form">
       <input type="hidden" id="editingUserId" value="">
       <div><label>Nome completo</label><input id="newUserName" required></div>
+        <div><label>Local / Equipe</label>
+          <select id="newUserLocation" required>
+            <option value="ALI Jardim - MS">ALI Jardim - MS</option>
+            <option value="ALI Bonito - MS">ALI Bonito - MS</option>
+          </select>
+        </div>
       <div><label>CPF</label><input id="newUserCpf" inputmode="numeric" maxlength="14" required placeholder="000.000.000-00"></div>
       <div><label>E-mail</label><input id="newUserEmail" type="email" required placeholder="usuario@exemplo.com"></div>
       <div><label>Senha</label><input id="newUserPassword" type="password" inputmode="numeric" maxlength="6" required placeholder="6 dígitos"></div>
@@ -803,7 +813,7 @@ async function renderAllActivities(){
   if(sb){
     const {data,error}=await sb
       .from("activities")
-      .select("*, profiles(name, codinome, cpf)")
+      .select("*, profiles(location)")
       .order("saida_data",{ascending:false})
       .order("saida_hora",{ascending:false});
     if(error){
@@ -812,8 +822,8 @@ async function renderAllActivities(){
     }
     rows=(data||[]).map(a=>({
       ...a,
-      ownerName:a.profiles?.codinome||a.profiles?.name||a.owner_id||"—",
-      ownerCpf:a.profiles?.cpf||"—",
+      ownerName:a.profiles?.location||"—",
+      ownerCpf:"",
       data:a.saida_data,
       hora:a.saida_hora,
       saidaLocal:a.saida_local,
@@ -840,10 +850,10 @@ async function renderAllActivities(){
 
   $("allActivitiesContent").innerHTML=`<div class="report-count"><strong>${rows.length}</strong> relatório(s) lançado(s) pela equipe de campo, em ordem de data.</div>
   <div class="table-scroll"><table class="admin-table"><thead><tr>
-    <th>Data/hora</th><th>Equipe / CPF</th><th>Saída</th><th>Destino</th><th>Viatura</th><th>KM</th><th>Retorno</th><th>Descrição</th>
+    <th>Data/hora</th><th>Local / Equipe</th><th>Saída</th><th>Destino</th><th>Viatura</th><th>KM</th><th>Retorno</th><th>Descrição</th>
   </tr></thead><tbody>${rows.map(a=>`<tr>
     <td>${a.data?new Date(`${a.data}T${a.hora||"00:00"}`).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}):"—"}</td>
-    <td>${a.ownerName||a.owner||"—"}<br><small>${a.ownerCpf||""}</small></td>
+    <td>${a.ownerName||a.owner||"—"}</td>
     <td>${a.saidaLocal||"—"}</td>
     <td>${a.destino||"—"}</td>
     <td><strong>${a.viatura||"—"}</strong></td>
@@ -857,11 +867,11 @@ async function renderAdminHomeActivities(){
   let rows=[];
   if(sb){
     const {data,error}=await sb.from("activities")
-      .select("*, profiles(name, codinome, cpf)")
+      .select("*, profiles(location)")
       .order("saida_data",{ascending:false})
       .order("saida_hora",{ascending:false});
     if(error){$("adminHomeActivities").innerHTML='<div class="empty">Não foi possível carregar os relatórios.</div>';return;}
-    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.codinome||a.profiles?.name||"—",ownerCpf:a.profiles?.cpf||"—"}));
+    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.name||"—",ownerCpf:a.profiles?.cpf||"—"}));
   }else{
     rows=[...window.ariDemoActivities].sort((a,b)=>`${b.data||""} ${b.hora||""}`.localeCompare(`${a.data||""} ${a.hora||""}`));
   }
@@ -884,7 +894,7 @@ async function generateDemoReport(){
 
   if(sb){
     let query=sb.from("activities")
-      .select("*, profiles(name, codinome, cpf)")
+      .select("*, profiles(location)")
       .order("saida_data",{ascending:true})
       .order("saida_hora",{ascending:true});
     if(start) query=query.gte("saida_data",start);
@@ -897,7 +907,7 @@ async function generateDemoReport(){
       $("printReport").disabled=true;
       return;
     }
-    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.codinome||a.profiles?.name||"—",ownerCpf:a.profiles?.cpf||"—"}));
+    rows=(data||[]).map(a=>({...a,ownerName:a.profiles?.name||"—",ownerCpf:a.profiles?.cpf||"—"}));
   }else{
     rows=[...window.ariDemoActivities].filter(a=>{
       const d=a.data||"";

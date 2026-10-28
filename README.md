@@ -38,7 +38,3 @@ Interface responsiva para lançamento de saída, viatura, KM, destino, descriç�
 
 ## Municípios
 O campo de saída/destino usa os 38 municípios da Mesorregião Sudoeste de Mato Grosso do Sul conforme a classificação geográfica consultada. A lista foi incorporada ao protótipo.
-
-## Campo Codinome
-O cadastro de usuários inclui o campo `codinome`, utilizado como identificação nos relatórios no lugar do nome completo (com fallback para nome quando o codinome estiver vazio).
-Para um banco Supabase já existente, execute `MIGRACAO_CODINOME.sql` no SQL Editor. A Edge Function `admin-users` também precisa aceitar e gravar `codinome` nas ações `create` e `update`; essa função não está incluída neste ZIP.
