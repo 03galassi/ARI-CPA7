@@ -553,6 +553,16 @@ async function renderDemoUsers(){
           <button id="userCancelEdit" class="secondary hidden" type="button">Cancelar edição</button>
         </div>
       </form>
+      <section class="card" style="margin-top:18px;padding:16px;">
+        <h3>Gerenciar equipes</h3>
+        <p class="muted">Cadastre novas equipes. Elas passarão a aparecer na lista de equipes do cadastro de usuários.</p>
+        <form id="teamForm" class="grid">
+          <div><label for="newTeamName">Nome da nova equipe</label><input id="newTeamName" maxlength="100" placeholder="Ex.: ALI outra cidade - MS" required></div>
+          <div class="actions"><button class="primary" id="teamSubmit" type="submit">Cadastrar equipe</button></div>
+        </form>
+        <p id="teamMsg" class="msg hidden"></p>
+        <div id="teamsList" class="table-scroll"><div class="empty">Carregando equipes...</div></div>
+      </section>
       <p id="userMsg" class="msg hidden"></p>
       <h3>Usuários cadastrados</h3>
       <div id="usersTableBox" class="table-scroll"><div class="empty">Carregando usuários...</div></div>
@@ -596,6 +606,41 @@ async function renderDemoUsers(){
       }
       return result;
     }
+
+    async function loadTeams(){
+      const {data,error}=await sb.from("teams").select("id,name,active").eq("active",true).order("name",{ascending:true});
+      if(error){
+        console.error("ARI-CPA7 loadTeams:",error);
+        showMsg($("teamMsg"),"Não foi possível carregar as equipes. Execute o arquivo migration_equipes.sql no SQL Editor do Supabase.");
+        return;
+      }
+      const select=$("newUserLocation");
+      const previous=select.value;
+      select.innerHTML=(data||[]).map(t=>`<option value="${escHtml(t.name)}">${escHtml(t.name)}</option>`).join("");
+      if(previous && (data||[]).some(t=>t.name===previous)) select.value=previous;
+      $("teamsList").innerHTML=(data||[]).length?`<table class="admin-table"><thead><tr><th>Equipe</th><th>Status</th></tr></thead><tbody>${data.map(t=>`<tr><td>${escHtml(t.name)}</td><td>Ativa</td></tr>`).join("")}</tbody></table>`:'<div class="empty">Nenhuma equipe cadastrada.</div>';
+    }
+
+    async function saveProfileLocation(userId, locationName){
+      const {data,error}=await sb.rpc("admin_set_profile_location",{p_user_id:userId,p_location:locationName});
+      if(error) throw new Error("Usuário salvo, mas não foi possível gravar a equipe: "+error.message+". Execute migration_equipes.sql no Supabase.");
+      if(data===false) throw new Error("Usuário salvo, mas o banco recusou a gravação da equipe. Verifique se sua conta possui perfil de administrador ativo.");
+    }
+
+    $("teamForm").addEventListener("submit",async e=>{
+      e.preventDefault(); hideMsg($("teamMsg"));
+      const name=$("newTeamName").value.trim();
+      if(!name){showMsg($("teamMsg"),"Informe o nome da equipe.");return;}
+      try{
+        $("teamSubmit").disabled=true;
+        const {error}=await sb.from("teams").insert({name,active:true});
+        if(error) throw error;
+        $("newTeamName").value="";
+        showMsg($("teamMsg"),"Equipe cadastrada com sucesso.");
+        await loadTeams();
+      }catch(err){showMsg($("teamMsg"),/duplicate|unique/i.test(err.message||"")?"Essa equipe já está cadastrada.":(err.message||"Não foi possível cadastrar a equipe."));}
+      finally{$("teamSubmit").disabled=false;}
+    });
 
     async function loadRealUsers(){
       // Compatibilidade com bancos que ainda não receberam a coluna location.
@@ -739,6 +784,7 @@ async function renderDemoUsers(){
           if(password) payload.password = password;
 
           await callAdminUsers("update", payload);
+          await saveProfileLocation(editingId, payload.location);
           showMsg($("userMsg"), "Usuário atualizado com sucesso.");
         }else{
           await callAdminUsers("create", {
@@ -749,6 +795,9 @@ async function renderDemoUsers(){
             role,
             location: $("newUserLocation").value
           });
+          const {data:createdProfile,error:profileLookupError}=await sb.from("profiles").select("id").eq("cpf",cpf).maybeSingle();
+          if(profileLookupError || !createdProfile?.id) throw new Error("Usuário criado, mas não foi possível localizar o perfil para vincular a equipe. Atualize a lista e edite o usuário.");
+          await saveProfileLocation(createdProfile.id, $("newUserLocation").value);
           showMsg($("userMsg"), "Usuário cadastrado com sucesso.");
         }
 
@@ -778,6 +827,7 @@ async function renderDemoUsers(){
       hideMsg($("userMsg"));
     };
 
+    await loadTeams();
     await loadRealUsers();
     return;
   }

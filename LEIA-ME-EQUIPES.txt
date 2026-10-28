@@ -1,0 +1,24 @@
+ARI-CPA7 — VÍNCULO DE EQUIPE E CADASTRO DE NOVAS EQUIPES
+
+O que foi alterado:
+- O administrador pode cadastrar novas equipes na seção Usuários > Gerenciar equipes.
+- A lista de equipes do cadastro de usuários é carregada do banco de dados.
+- O vínculo de equipe do perfil é salvo por uma função SQL segura para administradores ativos.
+- As telas e relatórios consultam a equipe associada ao perfil, sem expor nome/CPF do agente nos relatórios.
+- Equipes iniciais incluídas: ALI Jardim - MS e ALI Bonito - MS.
+
+INSTALAÇÃO OBRIGATÓRIA:
+1. No Supabase, abra SQL Editor > New query.
+2. Abra o arquivo migration_equipes.sql deste pacote, copie todo o conteúdo e execute.
+3. Publique os arquivos atualizados do pacote no GitHub Pages, substituindo os arquivos correspondentes.
+4. Confirme que index.html usa app.js?v=20261028-1530 (já está atualizado neste pacote).
+5. Acesse o aplicativo e pressione Ctrl+F5.
+6. Como administrador, entre em Usuários. Em Gerenciar equipes, devem aparecer ALI Jardim - MS e ALI Bonito - MS; ali também é possível cadastrar novas equipes.
+7. Edite os usuários existentes e selecione a equipe correta. Para novos usuários, selecione a equipe no cadastro.
+8. Crie uma atividade de teste e confirme que o relatório mostra a equipe escolhida.
+
+IMPORTANTE:
+- Não apague os agentes nem o histórico para aplicar esta atualização.
+- O SQL não apaga atividades ou perfis existentes.
+- A função admin_set_profile_location só permite alteração por perfil administrador ativo.
+- Se houver uma mensagem de erro ao executar o SQL, não publique a versão antes de corrigir o erro.
