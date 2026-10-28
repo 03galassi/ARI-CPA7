@@ -7,6 +7,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null,
+  codinome text not null default '',
   cpf text not null unique,
   role text not null default 'operator' check (role in ('operator','admin')),
   status text not null default 'ativo' check (status in ('ativo','bloqueado')),
@@ -105,3 +106,7 @@ for each row execute function public.set_activity_owner();
 -- que use service_role para criar auth.users e inserir public.profiles.
 -- Nunca coloque service_role no navegador.
 -- O perfil admin/operador fica protegido por RLS; o cliente não deve criar usuários diretamente.
+
+
+-- Compatibilidade com bancos já existentes:
+alter table public.profiles add column if not exists codinome text not null default '';
